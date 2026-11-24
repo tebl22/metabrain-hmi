@@ -1,6 +1,6 @@
 //! Configuration: one JSON file describes every brain, service and option (port of config.py).
 //! Kept as free-form JSON so unknown keys survive hand edits.
-use crate::util::{data_dir, home, read_json, truthy, write_json, J};
+use crate::util::{data_dir, home, truthy, write_json, J};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -79,7 +79,7 @@ pub fn templates() -> Value {
 
 pub fn default_cfg() -> Value {
     json!({
-        "lang": "es",
+        "lang": "en",
         "port": 8790,
         "lan": {"enabled": false, "pin": ""},
         "mode": "normal",
@@ -226,10 +226,26 @@ impl Config {
     }
 
     fn load(path: &std::path::Path) -> Value {
-        let raw = match read_json(path) {
-            Some(v @ Value::Object(_)) => v,
-            _ => {
-                if path.exists() {
+        let mut read_res = std::fs::read(path);
+        for attempt in 0..4u64 {
+            match &read_res {
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::WouldBlock
+                    ) || e.raw_os_error() == Some(32) =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(25 * (attempt + 1)));
+                    read_res = std::fs::read(path);
+                }
+                _ => break,
+            }
+        }
+        let mut persist_allowed = true;
+        let raw = match read_res {
+            Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
+                Ok(v @ Value::Object(_)) => v,
+                _ => {
                     let ts = crate::util::now() as u64;
                     let bak = path.with_file_name(format!(
                         "{}.corrupt.{ts}",
@@ -238,25 +254,51 @@ impl Config {
                             .unwrap_or_else(|| "metabrain.json".into())
                     ));
                     match std::fs::copy(path, &bak) {
-                        Ok(_) => crate::util::log(&format!(
-                            "config: corrupted {} backed up to {}",
-                            path.display(),
-                            bak.display()
-                        )),
-                        Err(e) => crate::util::log(&format!(
-                            "config: failed to back up corrupted {}: {e}",
-                            path.display()
-                        )),
+                        Ok(_) => {
+                            crate::util::log(&format!(
+                                "config: corrupted {} backed up to {}",
+                                path.display(),
+                                bak.display()
+                            ));
+                            let r = first_run_config();
+                            if let Err(e) = write_json(path, &r) {
+                                crate::util::log(&format!(
+                                    "config: failed writing initial config {}: {e}",
+                                    path.display()
+                                ));
+                            }
+                            r
+                        }
+                        Err(e) => {
+                            // Never overwrite the user's file if we couldn't preserve a backup first.
+                            persist_allowed = false;
+                            crate::util::log(&format!(
+                                "config: failed to back up corrupted {} ({e}); refusing to overwrite on disk",
+                                path.display()
+                            ));
+                            first_run_config()
+                        }
                     }
                 }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 let r = first_run_config();
-                if let Err(e) = write_json(path, &r) {
+                if let Err(err) = write_json(path, &r) {
                     crate::util::log(&format!(
-                        "config: failed writing initial config {}: {e}",
+                        "config: failed writing initial config {}: {err}",
                         path.display()
                     ));
                 }
                 r
+            }
+            Err(e) => {
+                // Transient I/O / permission lock error: fall back in memory without overwriting disk.
+                persist_allowed = false;
+                crate::util::log(&format!(
+                    "config: transient error reading {} ({e}); using in-memory defaults without overwriting disk",
+                    path.display()
+                ));
+                first_run_config()
             }
         };
         let mut cfg = default_cfg();
@@ -268,11 +310,13 @@ impl Config {
                 cfg["lan"] = json!({});
             }
             cfg["lan"]["pin"] = json!(pin);
-            if let Err(e) = write_json(path, &cfg) {
-                crate::util::log(&format!(
-                    "config: failed persisting generated PIN {}: {e}",
-                    path.display()
-                ));
+            if persist_allowed {
+                if let Err(e) = write_json(path, &cfg) {
+                    crate::util::log(&format!(
+                        "config: failed persisting generated PIN {}: {e}",
+                        path.display()
+                    ));
+                }
             }
         }
         if let Some(bs) = cfg.get_mut("brains").and_then(|b| b.as_array_mut()) {
@@ -310,12 +354,18 @@ impl Config {
             }
         }
         let mut merged = default_cfg();
-        if let (Some(m), Some(n)) = (merged.as_object_mut(), new.as_object()) {
-            for (k, v) in n {
-                m.insert(k.clone(), v.clone());
+        merge_shallow(&mut merged, &new);
+        {
+            let mut cur = self.data.lock().unwrap_or_else(|e| e.into_inner());
+            let prev_pin = cur["lan"].s("pin");
+            if merged["lan"].s("pin").is_empty() && !prev_pin.is_empty() {
+                if !merged["lan"].is_object() {
+                    merged["lan"] = json!({});
+                }
+                merged["lan"]["pin"] = json!(prev_pin);
             }
+            *cur = merged;
         }
-        *self.data.lock().unwrap_or_else(|e| e.into_inner()) = merged;
         self.save();
         vec![]
     }
@@ -405,11 +455,16 @@ pub fn normalize_brain(b: &mut Value) {
     }
     let o = b.as_object_mut().unwrap();
     o.entry("enabled").or_insert(json!(true));
-    if !o.contains_key("id") {
+    let has_valid_id = o
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    if !has_valid_id {
         let n = o
             .get("name")
             .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
+            .filter(|s| !s.trim().is_empty())
             .map(String::from)
             .unwrap_or_else(|| {
                 o.get("kind")
@@ -417,7 +472,26 @@ pub fn normalize_brain(b: &mut Value) {
                     .unwrap_or("brain")
                     .to_string()
             });
-        o.insert("id".into(), json!(n.to_lowercase().replace(' ', "_")));
+        let slug: String = n
+            .to_lowercase()
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let slug = slug.trim_matches('_').to_string();
+        o.insert(
+            "id".into(),
+            json!(if slug.is_empty() {
+                "brain".into()
+            } else {
+                slug
+            }),
+        );
     }
 }
 
@@ -437,6 +511,15 @@ pub fn validate(cfg: &Value) -> Vec<String> {
                 kinds.join(", ")
             ));
         }
+        if let Some(id) = b.os("id") {
+            if !crate::util::valid_id(&id) {
+                errs.push(format!(
+                    "brain #{}: id '{}' must contain only letters, digits, '_' or '-'",
+                    i + 1,
+                    id
+                ));
+            }
+        }
         match b.os("id").or_else(|| b.os("name")) {
             None => errs.push(format!("brain #{}: needs an id or name", i + 1)),
             Some(id) => {
@@ -452,10 +535,8 @@ pub fn validate(cfg: &Value) -> Vec<String> {
             errs.push(format!("service #{}: needs id and cmd", i + 1));
         }
     }
-    match cfg.get("port") {
-        None | Some(Value::Number(_)) => {}
-        Some(Value::String(s)) if s.trim().parse::<i64>().is_ok() => {}
-        _ => errs.push("port must be a number".into()),
+    if cfg.get("port").is_some() && valid_port(cfg).is_none() {
+        errs.push("port must be an integer between 1 and 65535".into());
     }
     errs
 }
@@ -615,7 +696,7 @@ mod tests {
             1,
             "corrupted config must be backed up before regeneration"
         );
-        assert!(read_json(&cfg_path).is_some());
+        assert!(crate::util::read_json(&cfg_path).is_some());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

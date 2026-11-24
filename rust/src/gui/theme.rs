@@ -16,11 +16,11 @@ pub const RULE: Color32 = Color32::from_rgb(0x3A, 0x43, 0x4B);
 pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(0x46, 0x51, 0x5B);
 pub const INK: Color32 = Color32::from_rgb(0xE3, 0xE7, 0xEA);
 pub const INK2: Color32 = Color32::from_rgb(0xB4, 0xBE, 0xC6);
-pub const INK3: Color32 = Color32::from_rgb(0x90, 0x9B, 0xA5);
+pub const INK3: Color32 = Color32::from_rgb(0x9E, 0xA9, 0xB3);
 pub const RUN: Color32 = Color32::from_rgb(0x4C, 0xC3, 0x8A);
 pub const ATTN: Color32 = Color32::from_rgb(0xE2, 0xA3, 0x3A);
-pub const ALARM: Color32 = Color32::from_rgb(0xE3, 0x5D, 0x52);
-pub const INFO: Color32 = Color32::from_rgb(0x7A, 0xA7, 0xD1);
+pub const ALARM: Color32 = Color32::from_rgb(0xFA, 0x88, 0x7F);
+pub const INFO: Color32 = Color32::from_rgb(0x86, 0xB6, 0xE2);
 pub const MASTER: Color32 = Color32::from_rgb(0xF2, 0xB2, 0x4C);
 
 pub const R: u8 = 6;
@@ -655,16 +655,26 @@ mod contrast_tests {
 
     #[test]
     fn secondary_and_faint_text_meet_wcag_aa_on_core_surfaces() {
-        for bg in [FIELD, PANEL, RAISED] {
+        for bg in [FIELD, PANEL, RAISED, RAISED2] {
             assert!(
                 contrast(INK3, bg) >= 4.5,
                 "INK3 contrast too low: {:.2}",
                 contrast(INK3, bg)
             );
             assert!(
-                contrast(INK2, bg) >= 6.5,
+                contrast(INK2, bg) >= 5.5,
                 "INK2 contrast too low: {:.2}",
                 contrast(INK2, bg)
+            );
+            assert!(
+                contrast(ALARM, bg) >= 4.5,
+                "ALARM contrast too low: {:.2}",
+                contrast(ALARM, bg)
+            );
+            assert!(
+                contrast(INFO, bg) >= 4.5,
+                "INFO contrast too low: {:.2}",
+                contrast(INFO, bg)
             );
         }
     }

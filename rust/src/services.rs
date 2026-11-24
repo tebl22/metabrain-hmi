@@ -106,9 +106,7 @@ impl Machine {
             d.cpu = Some(cpu);
             d.ram = ram;
             d.ts = now();
-            if gpu.is_some() {
-                d.gpu = gpu;
-            }
+            d.gpu = gpu;
         }
     }
 
@@ -123,11 +121,36 @@ impl Machine {
         c.stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        let out = c.output().ok()?;
-        if !out.status.success() {
+        let mut child = c.spawn().ok()?;
+        let _job = crate::util::attach_kill_job(&child).ok();
+        let mut stdout = child.stdout.take()?;
+        let reader = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut stdout, &mut buf);
+            buf
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(st)) => break Some(st),
+                Ok(None) => {
+                    if std::time::Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break None;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(_) => break None,
+            }
+        };
+        drop(_job);
+        let status = status?;
+        if !status.success() {
             return None;
         }
-        let text = String::from_utf8_lossy(&out.stdout);
+        let raw = reader.join().ok()?;
+        let text = String::from_utf8_lossy(&raw);
         let line = text.lines().next()?.trim();
         let parts: Vec<&str> = line.split(',').map(str::trim).collect();
         if parts.len() < 3 {
@@ -156,7 +179,10 @@ impl Machine {
     }
 
     pub fn find(&self, needle: &str) -> Vec<Proc> {
-        let n = needle.to_lowercase();
+        let n = needle.trim().to_lowercase();
+        if n.is_empty() {
+            return Vec::new();
+        }
         let me = std::process::id();
         let Ok(d) = self.inner.lock() else {
             return Vec::new();
@@ -316,24 +342,33 @@ fn basename(p: &str) -> String {
 /// The match string (used to find it among running processes) is the last argument of cmd
 /// unless "match" is given.
 pub struct Services {
-    pub cfg: Value,
+    cfg: std::sync::RwLock<Value>,
     pub m: Arc<Machine>,
     pub diary: Arc<Diary>,
     manual_off: Mutex<HashSet<String>>,
+    backoff: Mutex<std::collections::HashMap<String, (u32, f64)>>,
 }
 
 impl Services {
     pub fn new(cfg: Value, machine: Arc<Machine>, diary: Arc<Diary>) -> Services {
         Services {
-            cfg,
+            cfg: std::sync::RwLock::new(cfg),
             m: machine,
             diary,
             manual_off: Mutex::new(HashSet::new()),
+            backoff: Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    pub fn update_cfg(&self, cfg: Value) {
+        if let Ok(mut g) = self.cfg.write() {
+            *g = cfg;
         }
     }
 
     pub fn items(&self) -> Vec<Value> {
-        match self.cfg.get("services") {
+        let g = self.cfg.read().unwrap_or_else(|e| e.into_inner());
+        match g.get("services") {
             Some(Value::Array(a)) => a.clone(),
             _ => Vec::new(),
         }
@@ -505,7 +540,8 @@ impl Services {
 
     pub fn watchdog(&self) {
         let ts = self.m.ts();
-        if ts == 0.0 || now() - ts > 30.0 {
+        let tnow = now();
+        if ts == 0.0 || tnow - ts > 30.0 {
             return;
         }
         for s in self.items() {
@@ -519,16 +555,41 @@ impl Services {
                 .get("autorestart")
                 .map(|v| truthy(Some(v)))
                 .unwrap_or(true);
-            if autorestart && !manual && self.running(&s).is_empty() {
+            if !self.running(&s).is_empty() {
+                if let Ok(mut b) = self.backoff.lock() {
+                    b.remove(&id);
+                }
+                continue;
+            }
+            if autorestart && !manual {
+                let skip = self
+                    .backoff
+                    .lock()
+                    .ok()
+                    .and_then(|b| b.get(&id).copied())
+                    .is_some_and(|(_, next_try)| tnow < next_try);
+                if skip {
+                    continue;
+                }
                 let res = self.start(&s);
                 let name = s.get("name").and_then(|v| v.as_str()).unwrap_or(&id);
                 if res == "started" || res == "already running" {
+                    if let Ok(mut b) = self.backoff.lock() {
+                        let fails = b.get(&id).map(|(n, _)| *n).unwrap_or(0);
+                        let delay = (20.0 * 2.0_f64.powi(fails.min(4) as i32)).min(300.0);
+                        b.insert(id.clone(), (fails.saturating_add(1), tnow + delay));
+                    }
                     self.diary.add(
                         "MetaBrain",
                         &format!("{} was down: restarted it", name),
                         "warning",
                     );
                 } else {
+                    if let Ok(mut b) = self.backoff.lock() {
+                        let fails = b.get(&id).map(|(n, _)| *n + 1).unwrap_or(1);
+                        let delay = (30.0 * 2.0_f64.powi(fails.min(4) as i32)).min(600.0);
+                        b.insert(id.clone(), (fails, tnow + delay));
+                    }
                     self.diary.add(
                         "MetaBrain",
                         &format!("{} was down and failed to restart: {}", name, res),

@@ -209,16 +209,17 @@ impl Supervisor {
         r
     }
 
-    /// Running or queued tasks per brain (to share work among co-masters).
+    /// Running or queued tasks per brain (to share work among co-masters) — in-memory, zero disk I/O.
     fn task_load(&self) -> HashMap<String, usize> {
+        let qs = self.tasks.queue_summary();
         let mut m: HashMap<String, usize> = HashMap::new();
-        for t in self.tasks.list(300).as_array().cloned().unwrap_or_default() {
-            if matches!(
-                t.s("status").as_str(),
-                "running" | "queued" | "verifying" | "starting" | "planning" | "synthesizing"
-            ) {
-                *m.entry(t.s("brain")).or_insert(0) += 1;
+        for (bid, slot) in qs.per_brain {
+            if slot.running > 0 {
+                *m.entry(bid).or_insert(0) += slot.running;
             }
+        }
+        for w in qs.waiting {
+            *m.entry(w.brain).or_insert(0) += 1;
         }
         m
     }
@@ -243,6 +244,11 @@ impl Supervisor {
 
     /// Typed command chain: one entry per brain in priority order.
     pub fn chain_entries(&self, ts: f64) -> Vec<ChainEntry> {
+        let summ = self.ledger.summary(Some(ts));
+        self.chain_entries_with(ts, Some(&summ))
+    }
+
+    pub(super) fn chain_entries_with(&self, ts: f64, summ: Option<&Value>) -> Vec<ChainEntry> {
         let succ = crate::succession::Chain::from_cfg(&self.cfg.get());
         let brains = self.brain_list();
         let mut by_id: HashMap<String, Arc<Brain>> = HashMap::new();
@@ -257,21 +263,10 @@ impl Supervisor {
             let st = self.state.get(&id);
             let paused = st.b("paused", false);
             let paused_by = st.s("paused_by");
-            let (ratio, _) = self.budget_ratio(b, None);
-            // Quota applies to all subscription-backed brains (Claude Code, Codex/ChatGPT, Antigravity/Gemini).
-            // If failover switched a Claude brain to an alternate account, read that active account's quota.
-            let pct = if b.kind == "claude_code" {
-                if let Some(acct) = st.os("account").filter(|a| !a.is_empty()) {
-                    let q = self.failover.quota_for(b, &acct, false);
-                    crate::failover::session_limit(&q)
-                        .0
-                        .or_else(|| b.quota_pct())
-                } else {
-                    b.quota_pct()
-                }
-            } else {
-                b.quota_pct()
-            };
+            let (ratio, _) = self.budget_ratio(b, summ);
+            // Quota applies to all subscription-backed brains (Claude Code, Codex/ChatGPT, Antigravity/Gemini),
+            // taking the active failover account's max(session, weekly, quota) when Claude failover is active.
+            let pct = self.active_quota_pct(b);
             let fc = if b.kind == "claude_code" {
                 self.failover.forecast_for(&id)
             } else {
@@ -310,10 +305,13 @@ impl Supervisor {
             } else if let Some(e) = crate::succession::recent_error(&id, ts) {
                 available = false;
                 reason = format!("error: {e}");
-            } else if let Some(idle) = self.tasks.stalled_secs(&id, succ.stall_minutes * 60) {
+            } else if let Some(idle) = self
+                .tasks
+                .stalled_secs(&id, succ.stall_minutes.saturating_mul(60))
+            {
                 available = false;
                 reason = crate::succession::Reason::Stalled(idle / 60).label("es");
-            } else if let Some(p) = pct.filter(|p| *p >= succ.threshold_pct.min(98.0)) {
+            } else if let Some(p) = pct.filter(|p| *p >= succ.threshold_pct) {
                 available = false;
                 reason = if b.kind == "claude_code" {
                     format!("cuota 5 h al {:.0} %", p)
@@ -397,93 +395,119 @@ impl Supervisor {
 
     /// The command chain as the HMI draws it: one entry per brain in priority order.
     pub fn chain(&self, ts: f64) -> Vec<Value> {
-        self.chain_entries(ts)
+        let summ = self.ledger.summary(Some(ts));
+        self.chain_with(ts, Some(&summ))
+    }
+
+    pub(super) fn chain_with(&self, ts: f64, summ: Option<&Value>) -> Vec<Value> {
+        self.chain_entries_with(ts, summ)
             .into_iter()
             .filter_map(|e| serde_json::to_value(e).ok())
             .collect()
     }
 
-    /// Tokens spent by tasks on agents whose usage MetaBrain does not otherwise see (Codex,
+    /// Tokens and USD spent by tasks on agents whose usage MetaBrain does not otherwise see (Codex,
     /// Gemini/Antigravity, direct API calls) go into the brain's ledger, so "hoy / 5 h / 7 días"
     /// and the Uso charts count them. Only the growth since the last look is added.
     fn ledger_task_usage(&self) {
         let path = crate::util::data_dir().join("task_ledger.json");
-        let Ok(mut g) = self.task_ledger_seen.lock() else {
-            return;
-        };
-        let seen = g.get_or_insert_with(|| {
-            crate::util::read_json(&path)
-                .and_then(|v| v.as_object().cloned())
-                .map(|m| {
-                    m.into_iter()
-                        .map(|(k, v)| {
-                            (
-                                k,
-                                (
-                                    v.get(0).and_then(|x| x.as_i64()).unwrap_or(0),
-                                    v.get(1).and_then(|x| x.as_i64()).unwrap_or(0),
-                                ),
-                            )
-                        })
-                        .collect()
-                })
-                .unwrap_or_default()
-        });
+        let tasks = self.tasks.list(80).as_array().cloned().unwrap_or_default();
         let first_run = !path.exists();
-        let mut changed = false;
-        for m in self.tasks.list(80).as_array().cloned().unwrap_or_default() {
-            if !matches!(
-                m.s("kind").as_str(),
-                "codex" | "antigravity" | "gemini_cli" | "openai"
-            ) {
-                continue;
-            }
-            let id = m.s("id");
-            let tokens = m.get("tokens").and_then(|v| v.as_f64()).unwrap_or(0.0) as i64;
-            let cached = m
-                .f("cached_tokens")
-                .or_else(|| m.f("cached"))
-                .unwrap_or(0.0) as i64;
-            let (t0, c0) = seen.get(&id).copied().unwrap_or((0, 0));
-            if tokens <= t0 {
-                continue;
-            }
-            seen.insert(id, (tokens, cached));
-            changed = true;
-            if first_run {
-                continue; // don't backfill history on the first start
-            }
-            let dc = (cached - c0).max(0);
-            let model = Some(m.s("model")).filter(|x| !x.is_empty());
-            self.ledger.add(
-                crate::store::Usage {
+        let mut to_add: Vec<crate::store::Usage> = Vec::new();
+        let mut to_save: Option<Value> = None;
+
+        {
+            let Ok(mut g) = self.task_ledger_seen.lock() else {
+                return;
+            };
+            let seen = g.get_or_insert_with(|| {
+                crate::util::read_json(&path)
+                    .and_then(|v| v.as_object().cloned())
+                    .map(|m| {
+                        m.into_iter()
+                            .map(|(k, v)| {
+                                (
+                                    k,
+                                    (
+                                        v.get(0).and_then(|x| x.as_i64()).unwrap_or(0),
+                                        v.get(1).and_then(|x| x.as_i64()).unwrap_or(0),
+                                        v.get(2).and_then(|x| x.as_f64()).unwrap_or(0.0),
+                                    ),
+                                )
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            });
+            let mut changed = false;
+            for m in &tasks {
+                if !matches!(
+                    m.s("kind").as_str(),
+                    "codex" | "antigravity" | "gemini_cli" | "openai"
+                ) {
+                    continue;
+                }
+                let id = m.s("id");
+                let tokens = m.get("tokens").and_then(|v| v.as_f64()).unwrap_or(0.0) as i64;
+                let cached = m
+                    .f("cached_tokens")
+                    .or_else(|| m.f("cached"))
+                    .unwrap_or(0.0) as i64;
+                let usd = m.f("usd").unwrap_or(0.0);
+                let (t0, c0, u0) = seen.get(&id).copied().unwrap_or((0, 0, 0.0));
+                if tokens <= t0 && usd <= u0 {
+                    continue;
+                }
+                seen.insert(id, (tokens.max(t0), cached.max(c0), usd.max(u0)));
+                changed = true;
+                if first_run {
+                    continue; // don't backfill history on the first start
+                }
+                let dt = (tokens - t0).max(0);
+                let dc = (cached - c0).max(0).min(dt);
+                let du = (usd - u0).max(0.0);
+                let model = Some(m.s("model")).filter(|x| !x.is_empty());
+                to_add.push(crate::store::Usage {
                     ts: now(),
                     brain: m.s("brain"),
                     model,
-                    inp: (tokens - t0 - dc).max(0),
+                    // Store total input delta in `inp` (matching proxy OpenAI convention) so
+                    // `Usage::total()` includes cached tokens and `advisor.rs` computes cache hit cleanly.
+                    inp: dt,
                     out: 0,
                     cache_read: dc,
                     cache_write: 0,
-                    usd: 0.0,
-                },
-                true,
-            );
+                    usd: du,
+                });
+            }
+            if seen.len() > 300 {
+                let keep: std::collections::HashSet<String> =
+                    tasks.iter().map(|m| m.s("id")).collect();
+                seen.retain(|k, _| keep.contains(k));
+                changed = true;
+            }
+            if changed || first_run {
+                let v: Map<String, Value> = seen
+                    .iter()
+                    .map(|(k, (a, b, u))| (k.clone(), json!([a, b, u])))
+                    .collect();
+                to_save = Some(Value::Object(v));
+            }
         }
-        if changed || first_run {
-            let v: Map<String, Value> = seen
-                .iter()
-                .map(|(k, (a, b))| (k.clone(), json!([a, b])))
-                .collect();
-            let _ = crate::util::write_json(&path, &Value::Object(v));
+        for u in to_add {
+            self.ledger.add(u, true);
+        }
+        if let Some(v) = to_save {
+            let _ = crate::util::write_json(&path, &v);
         }
     }
 
-    pub(super) fn succession_tick(&self, t: f64) {
+    pub(super) fn succession_tick_with(&self, t: f64, summ: Option<&Value>) {
         self.ledger_task_usage();
-        let chain = self.chain(t);
+        let chain = self.chain_with(t, summ);
         self.notify_comebacks(&chain);
         self.auto_architect(&chain);
-        let chain = self.chain(t);
+        let chain = self.chain_with(t, summ);
         let ms = Self::masters_of(&chain);
         let master = if ms.is_empty() {
             None

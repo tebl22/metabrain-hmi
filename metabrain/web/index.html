@@ -10,7 +10,7 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <span class="dot" id="overall-dot"></span>
+      <span class="dot" id="overall-dot" role="img" aria-label="System status"></span>
       <h1>MetaBrain</h1>
       <span class="badge" id="version-badge">v1.4.0</span>
       <span class="badge badge-ro">Read-only monitor</span>
@@ -25,10 +25,11 @@
     <h2>LAN Monitor Sign-In</h2>
     <p class="muted">Enter the 6-digit PIN shown in MetaBrain Settings.</p>
     <form id="login-form">
+      <label for="pin-input" class="sr-only">6-digit LAN PIN</label>
       <input id="pin-input" type="password" inputmode="numeric" maxlength="12" placeholder="6-digit PIN" autocomplete="one-time-code" required />
       <button type="submit">Unlock Monitor</button>
     </form>
-    <p id="login-err" class="error hidden"></p>
+    <p id="login-err" class="error hidden" role="alert"></p>
   </main>
 
   <main id="dash-view" class="grid hidden">

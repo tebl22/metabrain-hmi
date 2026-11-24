@@ -168,6 +168,7 @@ impl Memory {
 
     pub fn active_locks(&self) -> Vec<Value> {
         let _g = self.guard();
+        let _flock = crate::util::FileLock::acquire(&self.locks.join("_locks"), 2000);
         let mut out = Vec::new();
         for f in glob_files(&self.locks.join("*.json")) {
             if let Some(c) = crate::util::read_json(&f) {
@@ -190,7 +191,7 @@ impl Memory {
         }
         let k = self.lock_file(path);
         let _g = self.guard();
-        let _flock = crate::util::FileLock::acquire(&k, 2000);
+        let _flock = crate::util::FileLock::acquire(&self.locks.join("_locks"), 2000)?;
         let mut since = now();
         if let Some(c) = crate::util::read_json(&k) {
             if let Some(ts) = c.get("ts").and_then(|v| v.as_f64()) {
@@ -215,7 +216,9 @@ impl Memory {
 
     pub fn release(&self, session: Option<&str>) {
         let _g = self.guard();
-        let _flock = crate::util::FileLock::acquire(&self.locks.join("_release"), 2000);
+        let Some(_flock) = crate::util::FileLock::acquire(&self.locks.join("_locks"), 2000) else {
+            return;
+        };
         for f in glob_files(&self.locks.join("*.json")) {
             if let Some(c) = crate::util::read_json(&f) {
                 if session_eq(c.get("session"), session) {
@@ -390,9 +393,16 @@ impl Memory {
             }
         }
         fs::create_dir_all(&self.root)?;
-        let tmp = self.root.join("INDEX.tmp");
+        static IDX_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let seq = IDX_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = self
+            .root
+            .join(format!(".INDEX.{}.{seq}.tmp", std::process::id()));
         fs::write(&tmp, l.join("\n") + "\n")?;
-        fs::rename(&tmp, self.root.join("INDEX.md"))?;
+        if let Err(e) = fs::rename(&tmp, self.root.join("INDEX.md")) {
+            let _ = fs::remove_file(&tmp);
+            return Err(e);
+        }
         Ok(())
     }
 }

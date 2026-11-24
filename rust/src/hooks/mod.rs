@@ -52,8 +52,19 @@ pub(super) fn _sessions() -> Value {
 }
 
 pub(super) fn _save_sessions(s: &Value) {
+    let path = data_dir().join(SESSIONS_FILE);
+    let _flock = crate::util::FileLock::acquire(&path, 1500);
     let t = now();
     let mut out = Map::new();
+    // Merge existing live entries from disk so concurrent hook processes don't clobber each other.
+    if let Some(existing) = read_json(&path).and_then(|v| v.as_object().cloned()) {
+        for (k, v) in existing {
+            let ts = v.get("ts").and_then(|x| x.as_f64()).unwrap_or(0.0);
+            if t - ts < SESSION_TTL {
+                out.insert(k, v);
+            }
+        }
+    }
     if let Some(obj) = s.as_object() {
         for (k, v) in obj {
             let ts = v.get("ts").and_then(|x| x.as_f64()).unwrap_or(0.0);
@@ -62,7 +73,7 @@ pub(super) fn _save_sessions(s: &Value) {
             }
         }
     }
-    let _ = write_json(&data_dir().join(SESSIONS_FILE), &Value::Object(out));
+    let _ = write_json(&path, &Value::Object(out));
 }
 
 pub(super) fn _deny(reason: &str) -> String {

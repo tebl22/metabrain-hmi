@@ -425,10 +425,7 @@ fn read_file(i: &mut ScanInner, f: &Path) -> bool {
             .get(6..fname.len().saturating_sub(6))
             .unwrap_or("")
             .to_string();
-        let meta_path = PathBuf::from(format!(
-            "{}.meta.json",
-            &f.to_string_lossy()[..f.to_string_lossy().len() - 6]
-        ));
+        let meta_path = f.with_extension("meta.json");
         let meta = read_json(&meta_path).unwrap_or(json!({}));
         let ses = session_entry(i, &sid, &spath);
         let sub = ses.subs.entry(aid.clone()).or_insert_with(|| Sub {
@@ -574,7 +571,13 @@ pub fn line(d: &Value, ses: &mut Session, sub: Option<&str>) {
         }
     }
     let u = m.o("usage");
-    let key = format!("{}|{}", py_str(m.get("id")), py_str(d.get("requestId")));
+    let mid_s = py_str(m.get("id"));
+    let rid_s = py_str(d.get("requestId"));
+    let key = if mid_s == "None" && rid_s == "None" {
+        format!("anon|{}", ts.map(|x| x.to_bits()).unwrap_or(0))
+    } else {
+        format!("{mid_s}|{rid_s}")
+    };
     if let (false, Some(ts)) = (u.as_object().map(|o| o.is_empty()).unwrap_or(true), ts) {
         let g = |k: &str| u.f(k).unwrap_or(0.0) as i64;
         let v = [

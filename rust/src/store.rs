@@ -334,11 +334,30 @@ impl Ledger {
             a.3 += u.cache_write;
             a.4 += u.usd;
         }
+        let csv_cell = |raw: &str| -> String {
+            let safe = if raw.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+                format!("'{raw}")
+            } else {
+                raw.to_string()
+            };
+            if safe.contains([',', '"', '\n', '\r']) {
+                format!("\"{}\"", safe.replace('"', "\"\""))
+            } else {
+                safe
+            }
+        };
         let mut rows = vec!["date,brain,model,input,output,cache_read,cache_write,usd".to_string()];
         for ((d, b, m), a) in agg {
             rows.push(format!(
-                "{d},{b},{m},{},{},{},{},{:.4}",
-                a.0, a.1, a.2, a.3, a.4
+                "{},{},{},{},{},{},{},{:.4}",
+                csv_cell(&d),
+                csv_cell(&b),
+                csv_cell(&m),
+                a.0,
+                a.1,
+                a.2,
+                a.3,
+                a.4
             ));
         }
         rows.join("\n") + "\n"

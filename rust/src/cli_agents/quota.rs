@@ -505,6 +505,7 @@ pub(super) fn save_antigravity_cache_at(
     if limits.is_empty() {
         return;
     }
+    let _flock = crate::util::FileLock::acquire(path, 1500);
     let mut map = crate::util::read_json(path)
         .and_then(|v| v.as_object().cloned())
         .unwrap_or_default();
@@ -575,6 +576,9 @@ pub fn antigravity_quota(model_hint: &str) -> Result<Vec<QuotaLimit>, String> {
             }
         }
     };
+    // Drop the kill-on-close Job Object BEFORE joining pipe reader threads so no
+    // lingering grandchild can hold stdout/stderr open and deadlock `poll_slow()`.
+    drop(_job);
     let stdout_bytes = h_out.join().unwrap_or_default();
     let stderr_bytes = h_err.join().unwrap_or_default();
     let stdout = String::from_utf8_lossy(&stdout_bytes);

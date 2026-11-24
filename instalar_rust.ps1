@@ -127,10 +127,27 @@ try {
 }
 "Installed MetaBrain v1.4.0 in $dest"
 
-# Install Claude Code hooks and register Windows autostart.
-foreach ($d in '.claude', '.claude-gmail') {
-    $p = "$env:USERPROFILE\$d\settings.json"
-    if (Test-Path $p) { Copy-Item $p "$p.bak_hooks_$st" }
+# Install Claude Code hooks (backing up configured Claude settings.json files) and register Windows autostart.
+$claudeDirs = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+$null = $claudeDirs.Add((Join-Path $env:USERPROFILE '.claude'))
+$cfgPath = Join-Path $data 'metabrain.json'
+if (Test-Path -LiteralPath $cfgPath) {
+    try {
+        $cfgObj = Get-Content -LiteralPath $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($b in @($cfgObj.brains)) {
+            if ($b.kind -eq 'claude_code' -and $b.config_dir) {
+                $cd = [string]$b.config_dir
+                if ($cd.StartsWith('~/') -or $cd.StartsWith('~\')) {
+                    $cd = Join-Path $env:USERPROFILE $cd.Substring(2)
+                }
+                $null = $claudeDirs.Add($cd)
+            }
+        }
+    } catch {}
+}
+foreach ($dir in $claudeDirs) {
+    $p = Join-Path $dir 'settings.json'
+    if (Test-Path -LiteralPath $p) { Copy-Item -LiteralPath $p -Destination "$p.bak_hooks_$st" }
 }
 $hooksProc = Start-Process -FilePath "$dest\metabrain.exe" -ArgumentList 'hooks', 'install' -Wait -PassThru
 if ($hooksProc.ExitCode -ne 0) { Write-Warning "hooks install returned exit code $($hooksProc.ExitCode)." }

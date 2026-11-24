@@ -146,12 +146,19 @@ pub struct App {
 }
 
 impl App {
-    /// Run a supervisor action off the UI thread, then refresh.
+    /// Run a supervisor action off the UI thread, then refresh. Surfaces non-"ok" results as a toast.
     pub fn act(&self, d: Value) {
         let sup = self.sup.clone();
         let data = self.data.clone();
+        let inbox = self.inbox.clone();
         std::thread::spawn(move || {
-            let _ = sup.act(&d);
+            let res = sup.act(&d);
+            if !res.is_empty() && res != "ok" {
+                let col = if res == "confirm" { ATTN } else { ALARM };
+                if let Ok(mut i) = inbox.lock() {
+                    i.push((res, col));
+                }
+            }
             refresh(&sup, &data, true);
         });
     }
@@ -207,12 +214,14 @@ impl App {
         body: Value,
         done: impl FnOnce(&Value) -> (String, Color32) + Send + 'static,
     ) {
-        let (url, inbox, sup, data) = (
+        let (url, key, cache, inbox, sup, data) = (
             format!(
                 "http://127.0.0.1:{}/{}",
                 self.port,
                 path.trim_start_matches('/')
             ),
+            path.to_string(),
+            self.cache.clone(),
             self.inbox.clone(),
             self.sup.clone(),
             self.data.clone(),
@@ -220,6 +229,11 @@ impl App {
         std::thread::spawn(move || {
             let r = crate::util::local_post_json(&url, &body, 120)
                 .unwrap_or_else(|e| json!({"error": e}));
+            // Invalidate any cached GET for this endpoint AFTER the POST finishes so the
+            // next frame never refetches stale pre-mutation state.
+            if let Ok(mut c) = cache.write() {
+                c.remove(&key);
+            }
             let msg = done(&r);
             if !msg.0.is_empty() {
                 if let Ok(mut i) = inbox.lock() {

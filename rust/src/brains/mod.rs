@@ -72,11 +72,16 @@ pub fn build(config: &Arc<Config>, ledger: &Arc<Ledger>, diary: &Arc<Diary>) -> 
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    if let Some((_, limits)) = crate::cli_agents::cached_antigravity_quota(&hint) {
+                    if let Some((cached_ts, limits)) =
+                        crate::cli_agents::cached_antigravity_quota(&hint)
+                    {
                         inner.quota = limits
                             .into_iter()
                             .filter_map(|q| serde_json::to_value(q).ok())
                             .collect();
+                        if cached_ts > 0.0 {
+                            inner.quota_ts = Some(cached_ts);
+                        }
                     }
                 }
                 Imp::Api(Mutex::new(inner))

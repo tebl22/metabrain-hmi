@@ -260,7 +260,7 @@ pub(super) fn brain_detail(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap, id
                                 .clicked()
                             {
                                 app.act(
-                                    json!({"a": "set", "brain": id, "field": "model", "value": m}),
+                                    json!({"a": "set", "brain": id, "field": "model", "value": m, "confirm": true}),
                                 );
                             }
                         }

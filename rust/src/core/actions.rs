@@ -171,7 +171,7 @@ impl Supervisor {
                 if !truthy(d.get("confirm")) && self.raises_spend(b, &field, &val) {
                     return "confirm".into();
                 }
-                let stored = if truthy(Some(&val)) {
+                let stored = if !val.is_null() {
                     val.clone()
                 } else {
                     Value::Null
@@ -197,16 +197,28 @@ impl Supervisor {
                     for k in ["tokens_day", "usd_day", "quota_pct"] {
                         if let Some(v) = d.get(k) {
                             let empty = v.is_null()
-                                || v.as_str().map(|s| s.is_empty()).unwrap_or(false)
-                                || v.as_f64() == Some(0.0);
+                                || v.as_str().map(|s| s.trim().is_empty()).unwrap_or(false)
+                                || v.as_f64() == Some(0.0)
+                                || v.as_str().and_then(|s| s.trim().parse::<f64>().ok())
+                                    == Some(0.0);
                             let nv = if empty {
                                 Value::Null
                             } else if k == "usd_day" {
-                                v.as_f64().map(|f| json!(f)).unwrap_or(Value::Null)
+                                v.as_f64()
+                                    .or_else(|| {
+                                        v.as_str().and_then(|s| s.trim().parse::<f64>().ok())
+                                    })
+                                    .filter(|x| x.is_finite() && *x > 0.0)
+                                    .map(|f| json!(f))
+                                    .unwrap_or(Value::Null)
                             } else {
                                 v.as_i64()
+                                    .or_else(|| {
+                                        v.as_str().and_then(|s| s.trim().parse::<i64>().ok())
+                                    })
+                                    .or_else(|| v.as_f64().map(|f| f as i64))
+                                    .filter(|x| *x > 0)
                                     .map(|i| json!(i))
-                                    .or_else(|| v.as_f64().map(|f| json!(f as i64)))
                                     .unwrap_or(Value::Null)
                             };
                             bud.insert(k.to_string(), nv);
@@ -277,12 +289,16 @@ impl Supervisor {
             );
         } else if a == "pilot"
             && b.is_some()
-            && matches!(d.s("mode").as_str(), "off" | "advise" | "act")
+            && matches!(d.s("mode").as_str(), "off" | "advise" | "act" | "auto")
         {
             let Some(b) = b.as_ref() else {
                 return "unknown action".into();
             };
-            let mode = d.s("mode");
+            let mode = if d.s("mode") == "auto" {
+                "act".to_string()
+            } else {
+                d.s("mode")
+            };
             self.cfg.with_brain(&b.id, |bc| {
                 bc["pilot"] = Value::String(mode.clone());
             });

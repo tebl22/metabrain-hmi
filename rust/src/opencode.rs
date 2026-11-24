@@ -137,6 +137,11 @@ impl OpenCode {
         let listing = match req_json(&format!("{base}/session"), &auth, None) {
             Ok(v) => v,
             Err(_) => {
+                // Back off 15 s when OpenCode is unreachable so poll_fast doesn't stall every 3 s.
+                {
+                    let mut i = self.lock();
+                    i.last_poll = now_ts + 15.0;
+                }
                 self.warn(format!("OpenCode no responde en {base}"));
                 return;
             }
@@ -532,6 +537,13 @@ impl OpenCode {
                     .unwrap_or_else(|| wanted.to_string())
             }
         };
+        if !full
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+            || full.contains("..")
+        {
+            return Err("invalid session id".to_string());
+        }
         let base = base_url(cfg);
         let auth = basic_auth(cfg);
         let url = format!("{base}/session/{full}/abort");

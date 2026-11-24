@@ -107,7 +107,7 @@ impl Supervisor {
             }
         }
         if let Some(v) = bud.get("quota_pct").filter(|v| truthy(Some(v))) {
-            if let Some(qp) = b.quota_pct() {
+            if let Some(qp) = self.active_quota_pct(b) {
                 if let Some(lim) = v.as_f64().filter(|x| *x != 0.0) {
                     parts.push((qp / lim, format!("quota {:.0}% / {}%", qp, num_raw(v))));
                 }
@@ -124,6 +124,35 @@ impl Supervisor {
                 .then_with(|| b.1.cmp(&a.1))
         });
         (Some(r), sorted.into_iter().map(|p| p.1).collect())
+    }
+
+    /// Full quota payload of the active failover account (if Claude failover switched away from primary).
+    pub(super) fn active_failover_quota(&self, b: &Brain) -> Option<Value> {
+        if b.kind != "claude_code" {
+            return None;
+        }
+        let acct = self.state.get(&b.id).os("account")?;
+        if acct.trim().is_empty() {
+            return None;
+        }
+        Some(self.failover.quota_for(b, &acct, false))
+    }
+
+    /// Highest active quota percentage (`session` / `weekly` / `quota`) respecting Claude failover.
+    pub(super) fn active_quota_pct(&self, b: &Brain) -> Option<f64> {
+        if let Some(q) = self.active_failover_quota(b) {
+            let max_pct = q
+                .arr("limits")
+                .into_iter()
+                .filter(|l| matches!(l.s("group").as_str(), "session" | "weekly" | "quota"))
+                .filter_map(|l| l.f("pct"))
+                .filter(|p| p.is_finite())
+                .reduce(f64::max);
+            if max_pct.is_some() {
+                return max_pct;
+            }
+        }
+        b.quota_pct()
     }
 
     // ---------- regulation (runs every ~20 s) ----------
@@ -193,7 +222,7 @@ impl Supervisor {
 
         let t = now();
         self.failover.tick(self, t);
-        self.succession_tick(t);
+        self.succession_tick_with(t, Some(&summ));
 
         let snap_brains: Vec<Value> = brains
             .iter()
@@ -205,10 +234,10 @@ impl Supervisor {
                 })
             })
             .collect();
-        self.advisor.tick(self, &snap_brains, t);
+        self.advisor.tick_with(self, &snap_brains, Some(&summ), t);
 
         // Command handover: remember who had the command and announce changes.
-        let chain = self.chain(t);
+        let chain = self.chain_with(t, Some(&summ));
         // Everyone on the commanding level; a brain that drops out hands its sessions over.
         let ms = Self::masters_of(&chain);
         if !ms.is_empty() {
@@ -232,6 +261,7 @@ impl Supervisor {
                     .filter(|e| e.s("kind") == "openai" && e.b("available", false))
                     .find_map(|e| self.brain(&e.s("id")))
                     .map(|x| x.cfg());
+                let mut jobs: Vec<(std::path::PathBuf, String, String)> = Vec::new();
                 for prev_id in prev_set.split('+').filter(|p| !ms.iter().any(|m| m == p)) {
                     let Some(pb) = self.brain(prev_id) else {
                         continue;
@@ -244,18 +274,27 @@ impl Supervisor {
                         .get(prev_id)
                         .os("account")
                         .unwrap_or_else(|| pb.config_dir());
+                    let pname = pb.name();
                     for s in pb.my_sessions() {
                         if t - s.c.last < 900.0 {
+                            jobs.push((s.path, pname.clone(), account.clone()));
+                        }
+                    }
+                }
+                if !jobs.is_empty() {
+                    let reason = format!("relevo de mando a {cur}");
+                    std::thread::spawn(move || {
+                        for (path, pname, account) in jobs {
                             let _ = crate::handoff::write_handoff(
-                                &s.path,
-                                &pb.name(),
+                                &path,
+                                &pname,
                                 &account,
-                                &format!("relevo de mando a {cur}"),
+                                &reason,
                                 &lang,
                                 summarizer.as_ref(),
                             );
                         }
-                    }
+                    });
                 }
             }
             let mut guard = self.last_master.lock().unwrap_or_else(|e| e.into_inner());
@@ -265,18 +304,21 @@ impl Supervisor {
             *guard = None;
         }
 
-        self.write_gate(Some(&summ));
+        self.write_gate_with(&chain, Some(&summ));
         self.services.watchdog();
     }
 
     pub fn write_gate(&self, summ: Option<&Value>) {
+        let ts = now();
+        let chain = self.chain_with(ts, summ);
+        self.write_gate_with(&chain, summ);
+    }
+
+    fn write_gate_with(&self, chain: &[Value], summ: Option<&Value>) {
         // A tiny file the Claude Code hook reads on every tool call (fast path, no HTTP).
         let ts = now();
-        let chain = self.chain(ts);
-        let master = Self::lead_of(&chain)
-            .map(Value::from)
-            .unwrap_or(Value::Null);
-        let masters = json!(Self::masters_of(&chain));
+        let master = Self::lead_of(chain).map(Value::from).unwrap_or(Value::Null);
+        let masters = json!(Self::masters_of(chain));
 
         let mut brains = Map::new();
         for b in self.brain_list() {
@@ -406,16 +448,50 @@ impl Supervisor {
                     e.insert(k.clone(), v.clone());
                 }
             }
+            // If Claude failover switched to an alternate account, reflect its live quota/account in the snapshot.
+            if let Some(q) = self.active_failover_quota(&b) {
+                if let Some(limits) = q.get("limits").filter(|v| v.is_array()) {
+                    e.insert("quota".into(), limits.clone());
+                }
+                if let Some(qts) = q.get("ts") {
+                    e.insert("quota_ts".into(), qts.clone());
+                }
+                if let Some(acct) = q.os("account") {
+                    e.insert("account".into(), json!(acct));
+                }
+                if let Some(plan) = q.os("plan") {
+                    e.insert("plan".into(), json!(plan));
+                }
+                if let Some(err) = q.os("error") {
+                    e.insert("quota_warning".into(), json!(err));
+                } else {
+                    e.remove("quota_warning");
+                }
+            }
             out.push(Value::Object(e));
         }
 
         let services = self.services.snapshot();
         let svc_arr = services.as_array().cloned().unwrap_or_default();
         let mut alarms = self.alarms(&out, &svc_arr);
-        // Stable ids, acknowledged alarms hidden until they expire, native notification for new alarms.
+        // Stable ids (keyed on structured entity+code when present so dynamic minutes don't break ack),
+        // acknowledged alarms hidden until they expire, native notification for new alarms.
         let acked = self.cfg.key("acked_alarms");
+        let mut active_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
         for a in alarms.iter_mut() {
-            let id = sha1_smol::Sha1::from(a.s("text")).digest().to_string()[..10].to_string();
+            let stable_key = match (
+                a.os("code"),
+                a.os("brain"),
+                a.os("service"),
+                a.os("session"),
+            ) {
+                (Some(code), Some(bid), _, Some(sid)) => format!("{code}:{bid}:{sid}"),
+                (Some(code), Some(bid), _, None) => format!("{code}:{bid}:{}", a.s("level")),
+                (Some(code), None, Some(svc), _) => format!("{code}:{svc}"),
+                _ => a.s("text"),
+            };
+            let id = sha1_smol::Sha1::from(stable_key).digest().to_string()[..10].to_string();
+            active_ids.insert(id.clone());
             a["id"] = json!(id);
         }
         let tnow = crate::util::now();
@@ -426,17 +502,19 @@ impl Supervisor {
                 .map(|until| until < tnow)
                 .unwrap_or(true)
         });
-        {
+        let to_notify: Vec<(String, String)> = {
             let mut seen = self.notified.lock().unwrap_or_else(|e| e.into_inner());
+            seen.retain(|id| active_ids.contains(id));
+            let is_en = self.cfg.key("lang").as_str() != Some("es");
+            let mut pending = Vec::new();
             for a in &alarms {
                 if a.s("level") == "alarm" && seen.insert(a.s("id")) {
-                    let text = if self.cfg.key("lang").as_str() == Some("en") {
+                    let text = if is_en {
                         a.s("text")
                     } else {
                         crate::l10n::es(&a.s("text"))
                     };
-                    // "Claude 1 (ESPE): cuota semanal al 92 %" -> title "Claude 1 (ESPE)", body "Cuota semanal al 92 %".
-                    // The app name and logo already appear in the toast header.
+                    // "Claude 1 (Work): cuota semanal al 92 %" -> title "Claude 1 (Work)", body "Cuota semanal al 92 %".
                     let (title, body) = match text.split_once(": ") {
                         Some((t, b)) if !t.is_empty() && !b.is_empty() => {
                             let mut c = b.chars();
@@ -446,11 +524,18 @@ impl Supervisor {
                             };
                             (t.to_string(), body)
                         }
-                        _ => ("Alarma".to_string(), text.clone()),
+                        _ => (
+                            if is_en { "Alarm" } else { "Alarma" }.to_string(),
+                            text.clone(),
+                        ),
                     };
-                    crate::insights::notify(&title, &body);
+                    pending.push((title, body));
                 }
             }
+            pending
+        };
+        for (title, body) in to_notify {
+            crate::insights::notify(&title, &body);
         }
         let has_alarm = alarms.iter().any(|a| a.s("level") == "alarm");
         let has_warning = alarms.iter().any(|a| a.s("level") == "warning");
@@ -466,7 +551,7 @@ impl Supervisor {
             .map(|o| o.keys().cloned().collect())
             .unwrap_or_default();
 
-        let chain = self.chain(ts);
+        let chain = self.chain_with(ts, Some(&summ));
         let master = Self::lead_of(&chain)
             .map(Value::from)
             .unwrap_or(Value::Null);
@@ -518,20 +603,16 @@ impl Supervisor {
             let bid = b.s("id");
             for l in b.arr("quota") {
                 let Some(pct) = l.f("pct") else { continue };
+                let grp = l.s("group");
+                let msg = if grp == "quota" || grp.is_empty() {
+                    format!("{name}: quota {pct:.0}%")
+                } else {
+                    format!("{name}: {grp} quota {pct:.0}%")
+                };
                 if pct >= 90.0 {
-                    entries.push(brain_alarm(
-                        "alarm",
-                        "quota",
-                        &bid,
-                        format!("{}: {} quota {:.0}%", name, l.s("group"), pct),
-                    ));
+                    entries.push(brain_alarm("alarm", "quota", &bid, msg));
                 } else if pct >= 75.0 {
-                    entries.push(brain_alarm(
-                        "warning",
-                        "quota",
-                        &bid,
-                        format!("{}: {} quota {:.0}%", name, l.s("group"), pct),
-                    ));
+                    entries.push(brain_alarm("warning", "quota", &bid, msg));
                 }
             }
             let st = b.get("state").cloned().unwrap_or(json!({}));
@@ -606,9 +687,17 @@ impl Supervisor {
                     service: None,
                     text: format!("{}: agente atascado ({})", name, reason),
                 });
+                let reason_kind = reason
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or(&reason)
+                    .to_string();
                 let fresh = {
                     let mut seen = self.stuck_seen.lock().unwrap_or_else(|e| e.into_inner());
-                    seen.insert((session.clone(), reason.clone()))
+                    if seen.len() > 256 {
+                        seen.clear();
+                    }
+                    seen.insert((session.clone(), reason_kind))
                 };
                 if fresh {
                     self.diary.add(
@@ -639,10 +728,10 @@ impl Supervisor {
                     if t - hb > 900.0 && !paused {
                         entries.push(AlarmEntry {
                             level: "warning".into(),
-                            code: None,
+                            code: Some("no_heartbeat".into()),
                             brain: None,
                             session: None,
-                            service: None,
+                            service: Some(name.clone()),
                             text: format!(
                                 "{}: no heartbeat for {} min",
                                 name,
@@ -767,7 +856,14 @@ fn merge_models(a: Option<&Value>, b: Option<&Value>) -> Value {
     for src in [a, b] {
         if let Some(o) = src.and_then(|v| v.as_object()) {
             for (k, v) in o {
-                m.insert(k.clone(), v.clone());
+                match m.get(k) {
+                    Some(prev) => {
+                        m.insert(k.clone(), add_num(prev, v));
+                    }
+                    None => {
+                        m.insert(k.clone(), v.clone());
+                    }
+                }
             }
         }
     }

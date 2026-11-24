@@ -826,9 +826,23 @@ fn route_cmd(rest: &[String]) -> i32 {
     let level = opts.get("level").and_then(|l| l.parse::<u8>().ok());
     let body = serde_json::json!({"project": project, "task": task, "level": level});
     let out = post_local("/api/route", &body).unwrap_or_else(|| {
-        let cfg = crate::util::read_json(&crate::util::data_dir().join("metabrain.json"))
+        let raw_cfg = crate::util::read_json(&crate::util::data_dir().join("metabrain.json"))
             .unwrap_or(serde_json::json!({}));
-        crate::router::Router::new(None).route(&cfg, &[], &project, &task, level)
+        let cfg = crate::router::task_routing_config(raw_cfg);
+        let chain: Vec<serde_json::Value> = cfg
+            .arr("brains")
+            .into_iter()
+            .filter(|b| b.b("enabled", true))
+            .map(|b| {
+                serde_json::json!({
+                    "id": b.s("id"),
+                    "name": b.s("name"),
+                    "kind": b.s("kind"),
+                    "available": true
+                })
+            })
+            .collect();
+        crate::router::Router::new(None).route(&cfg, &chain, &project, &task, level)
     });
     emit(&serde_json::to_string_pretty(&out).unwrap_or_default());
     0
@@ -868,12 +882,20 @@ fn split_opts(rest: &[String]) -> (std::collections::HashMap<String, String>, Ve
     let mut opts = std::collections::HashMap::new();
     let mut words = vec![];
     let mut i = 0;
+    let mut end_opts = false;
     while i < rest.len() {
-        if let Some(k) = rest[i].strip_prefix("--") {
-            if i + 1 < rest.len() {
-                opts.insert(k.to_string(), rest[i + 1].clone());
-                i += 2;
-                continue;
+        if !end_opts && rest[i] == "--" {
+            end_opts = true;
+            i += 1;
+            continue;
+        }
+        if !end_opts {
+            if let Some(k) = rest[i].strip_prefix("--") {
+                if matches!(k, "project" | "level" | "candidate" | "tokens") && i + 1 < rest.len() {
+                    opts.insert(k.to_string(), rest[i + 1].clone());
+                    i += 2;
+                    continue;
+                }
             }
         }
         words.push(rest[i].clone());
@@ -893,10 +915,7 @@ fn project_from_cwd() -> String {
 fn post_local(path: &str, body: &serde_json::Value) -> Option<serde_json::Value> {
     let cfg = crate::util::read_json(&crate::util::data_dir().join("metabrain.json"))
         .unwrap_or(serde_json::json!({}));
-    let port = cfg
-        .get("port")
-        .and_then(|p| p.as_u64())
-        .unwrap_or(DEFAULT_PORT as u64);
+    let port = crate::config::valid_port(&cfg).unwrap_or(DEFAULT_PORT);
     let url = format!("http://127.0.0.1:{port}{path}");
     let resp = ureq::post(&url)
         .timeout(std::time::Duration::from_secs(5))
@@ -913,7 +932,7 @@ mod autostart_tests {
 
     #[test]
     fn compare_autostart_detects_missing_synced_and_mismatch() {
-        let exe = Path::new(r"C:\Users\esteb\AppData\Local\Programs\MetaBrain\metabrain.exe");
+        let exe = Path::new(r"C:\Users\alice\AppData\Local\Programs\MetaBrain\metabrain.exe");
         assert!(matches!(
             compare_autostart(None, exe),
             AutostartStatus::Missing { .. }
@@ -924,14 +943,14 @@ mod autostart_tests {
         ));
 
         let same =
-            r#""c:\users\esteb\appdata\local\programs\metabrain\MetaBrain.exe" serve --no-browser"#;
+            r#""c:\users\alice\appdata\local\programs\metabrain\MetaBrain.exe" serve --no-browser"#;
         assert!(matches!(
             compare_autostart(Some(same), exe),
             AutostartStatus::Synced { .. }
         ));
 
         let verbatim =
-            Path::new(r"\\?\C:\Users\esteb\AppData\Local\Programs\MetaBrain\metabrain.exe");
+            Path::new(r"\\?\C:\Users\alice\AppData\Local\Programs\MetaBrain\metabrain.exe");
         assert!(matches!(
             compare_autostart(Some(same), verbatim),
             AutostartStatus::Synced { .. }

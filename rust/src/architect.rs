@@ -394,35 +394,34 @@ fn validate(v: &Value, brains: &[Value], chain: &[Value]) -> Option<Value> {
 /// Run the prompt on the best organizer available. Returns the raw text.
 fn ask_organizer(brains: &[Value], avail: &dyn Fn(&str) -> bool, prompt: &str) -> Option<String> {
     // 1) Gemini 4 Neon through the Google account (Antigravity CLI): good thinker, no API cost.
-    if brains
+    if let Some(agy_brain) = brains
         .iter()
-        .any(|b| b.s("kind") == "antigravity" && avail(&b.s("id")))
+        .find(|b| b.s("kind") == "antigravity" && avail(&b.s("id")))
     {
-        if let Some(bin) = crate::cli_agents::find_bin(crate::cli_agents::Agent::Antigravity) {
-            let mut cmd = std::process::Command::new(bin);
-            cmd.args([
-                "-p",
-                prompt,
-                "--output-format",
-                "json",
-                "--model",
-                "gemini-4-neon-medium",
-                "--mode",
-                "plan",
-                "--print-timeout",
-                "120s",
-            ])
-            .current_dir(std::env::temp_dir())
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null());
-            let _ = crate::util::hidden(&mut cmd);
-            if let Ok(o) = cmd.output() {
-                if let Ok(v) = serde_json::from_slice::<Value>(&o.stdout) {
-                    if v.s("status") == "SUCCESS" {
-                        return Some(v.s("response"));
-                    }
-                }
+        let ladder = agy_brain.arr("ladder");
+        let model = ladder
+            .iter()
+            .filter_map(|v| v.as_str())
+            .find(|m| m.to_lowercase().contains("neon-medium"))
+            .or_else(|| ladder.first().and_then(|v| v.as_str()))
+            .unwrap_or("gemini-4-neon-medium")
+            .to_string();
+        let tmp_cwd = std::env::temp_dir().to_string_lossy().into_owned();
+        if let Ok(resp) = crate::cli_agents::run_blocking_until(
+            crate::cli_agents::Agent::Antigravity,
+            prompt,
+            &tmp_cwd,
+            &model,
+            "medium",
+            "plan",
+            &[],
+            120,
+            &mut |_| {},
+            &mut |_| true,
+            &mut || false,
+        ) {
+            if !resp.trim().is_empty() {
+                return Some(resp);
             }
         }
     }

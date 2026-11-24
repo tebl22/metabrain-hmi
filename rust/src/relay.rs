@@ -76,30 +76,29 @@ fn relative_path(file: &str, base: &str) -> String {
     }
     let b = base.trim_end_matches(['/', '\\']);
     if !b.is_empty() {
-        if let Some(rest) = f.strip_prefix(b) {
+        let mut f_chars = f.chars().peekable();
+        let mut ok = true;
+        for bc in b.chars() {
+            let sep_b = bc == '/' || bc == '\\';
+            match f_chars.next() {
+                Some(fc) if sep_b && (fc == '/' || fc == '\\') => {}
+                Some(fc)
+                    if if cfg!(windows) {
+                        fc.to_lowercase().eq(bc.to_lowercase())
+                    } else {
+                        fc == bc
+                    } => {}
+                _ => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if ok && matches!(f_chars.peek(), Some('/' | '\\')) {
+            let rest: String = f_chars.collect();
             let rest = rest.trim_start_matches(['/', '\\']);
             if !rest.is_empty() {
                 return rest.to_string();
-            }
-        }
-        if cfg!(windows) {
-            let mut f_chars = f.chars();
-            let mut ok = true;
-            for bc in b.chars() {
-                match f_chars.next() {
-                    Some(fc) if fc.to_lowercase().eq(bc.to_lowercase()) => {}
-                    _ => {
-                        ok = false;
-                        break;
-                    }
-                }
-            }
-            if ok {
-                let rest: String = f_chars.collect();
-                let rest = rest.trim_start_matches(['/', '\\']);
-                if !rest.is_empty() {
-                    return rest.to_string();
-                }
             }
         }
     }
@@ -369,7 +368,7 @@ pub fn update(
     }
 
     let mut info = collect_with(transcript, 60_000);
-    if info.get("cwd").is_none() {
+    if info.s("cwd").is_empty() {
         if let Some(obj) = info.as_object_mut() {
             obj.insert("cwd".to_string(), json!(cwd));
         }
@@ -391,8 +390,23 @@ pub fn update(
     let full_md = format!("<!-- metabrain relay -->\n{notice}\n\n{rendered}");
 
     let key = key_for(cwd);
+    let atomic_write = |dst: &Path, content: &str| -> std::io::Result<()> {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let fname = dst
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "relay".into());
+        let tmp = dst.with_file_name(format!(".{fname}.{}.{seq}.tmp", std::process::id()));
+        fs::write(&tmp, content.as_bytes())?;
+        if let Err(e) = fs::rename(&tmp, dst) {
+            let _ = fs::remove_file(&tmp);
+            return Err(e);
+        }
+        Ok(())
+    };
     let full_path = relay.join(format!("{key}.full.md"));
-    if fs::write(&full_path, full_md.as_bytes()).is_err() {
+    if atomic_write(&full_path, &full_md).is_err() {
         log("relay: failed to write full handoff markdown");
         return None;
     }
@@ -407,16 +421,20 @@ pub fn update(
         &stamp,
     );
     let md_path = relay.join(format!("{key}.md"));
-    if fs::write(&md_path, compact_md.as_bytes()).is_err() {
+    if atomic_write(&md_path, &compact_md).is_err() {
         log("relay: failed to write handoff markdown");
         return None;
     }
 
     let index_path = relay.join("index.json");
+    let _idx_lock = crate::util::FileLock::acquire(&index_path, 2000);
     let mut index = object_or_empty(read_json(&index_path));
     let old = index.get(&key).cloned().unwrap_or(Value::Null);
     let same_brain = old.get("brain_id").and_then(|v| v.as_str()) == Some(brain_id);
-    let consumed = if same_brain {
+    let same_session = old.get("session_id").and_then(|v| v.as_str()) == Some(session_id);
+    // Preserve `consumed` only for updates from the exact same session; a new session from
+    // the same brain represents fresh work that other brains should receive.
+    let consumed = if same_brain && same_session {
         old.get("consumed")
             .filter(|v| v.is_object())
             .cloned()
@@ -466,6 +484,7 @@ pub fn inject(cwd: &str, brain_id: &str, lang: &str) -> Option<String> {
     let _ = lang;
     let relay = relay_dir();
     let index_path = relay.join("index.json");
+    let _idx_lock = crate::util::FileLock::acquire(&index_path, 2000);
     let mut index = object_or_empty(read_json(&index_path));
     let key = key_for(cwd);
 

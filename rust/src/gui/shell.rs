@@ -178,7 +178,7 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui, snap: &Value, pending: usize) {
                     }
                 });
                 if let Some(m) = picked_mode {
-                    app.act(json!({"a": "mode", "mode": m}));
+                    app.act(json!({"a": "mode", "mode": m, "confirm": m == "max"}));
                     app.say(format!("Mode: {}", m.to_uppercase()), RUN);
                 }
             }
@@ -588,7 +588,7 @@ pub fn palette(app: &mut App, ctx: &egui::Context, snap: &Value) {
         Cmd {
             label: "Mode: Max (highest capability)".into(),
             hint: "Mode",
-            run: json!({"a": "mode", "mode": "max"}),
+            run: json!({"a": "mode", "mode": "max", "confirm": true}),
         },
         Cmd {
             label: "Pause all brains".into(),

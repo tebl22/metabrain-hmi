@@ -51,6 +51,19 @@ Esto genera dos binarios en `rust/target/release/`:
 - `MetaBrain` (`MetaBrain.exe` en Windows) — HMI nativo de escritorio, bandeja y supervisor local
 - `metabrain-hook` (`metabrain-hook.exe` en Windows) — binario de consola para hooks de Claude Code y comandos CLI/MCP
 
+Ejecutar directamente:
+
+```bash
+./target/release/MetaBrain serve
+```
+
+Banderas opcionales:
+- `--lan` — expone el monitor móvil de solo lectura con PIN en `0.0.0.0` (HTTP sin TLS; usar solo en redes de confianza)
+- `--port <N>` — cambia el puerto de escucha (por defecto `8790`)
+- `--no-tray` — ejecuta sin icono en la bandeja del sistema
+- `--no-window` / `--web` — ejecuta solo el servidor sin abrir la ventana nativa de escritorio
+- `--no-browser` — evita abrir pestaña del navegador al iniciar
+
 ### Instalar en Windows
 
 ```powershell

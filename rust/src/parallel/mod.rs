@@ -856,30 +856,16 @@ impl ParallelEngine {
                         api_brain,
                     );
 
-                    let route_cand = if b_snapshot.mode == "build" {
-                        format!(
-                            "{}:{}:{}",
-                            bcfg.s("kind"),
-                            if model.is_empty() {
-                                "default"
-                            } else {
-                                model.as_str()
-                            },
-                            if effort.is_empty() {
-                                "none"
-                            } else {
-                                effort.as_str()
-                            }
-                        )
-                    } else {
-                        String::new()
-                    };
+                    let logical_cwd = parent_meta
+                        .os("cwd_project")
+                        .unwrap_or_else(|| parent_meta.s("cwd"));
                     let mut child_extra = json!({
                         "parent_run": run_id,
                         "branch_id": b_snapshot.id,
                         "branch_role": b_snapshot.role,
                         "branch_tier": b_snapshot.tier,
-                        "route_cand": route_cand,
+                        "verify_on_finish": b_snapshot.mode == "build",
+                        "cwd_project": logical_cwd,
                     });
                     if b_snapshot.mode == "build" && !parent_meta.s("wt_path").is_empty() {
                         for key in ["wt_path", "branch", "wt_base"] {

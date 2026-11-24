@@ -106,8 +106,7 @@ fn api_json(port: u16, method: &str, path: &str, body: Option<&Value>) -> Result
 /// Same port resolution the server uses (`data/metabrain.json` -> `port`).
 fn config_port() -> u16 {
     crate::util::read_json(&crate::util::data_dir().join("metabrain.json"))
-        .and_then(|c| c.get("port").and_then(|v| v.as_u64()))
-        .map(|p| p as u16)
+        .and_then(|c| crate::config::valid_port(&c))
         .unwrap_or(DEFAULT_PORT)
 }
 
@@ -364,8 +363,9 @@ fn tool_brains(port: u16) -> Value {
             .filter(|t| t.s("brain") == id && is_running(t))
             .count();
         let cupo = b
-            .get("capacity")
+            .get("max_parallel")
             .and_then(|v| v.as_u64())
+            .or_else(|| b.get("capacity").and_then(|v| v.as_u64()))
             .or_else(|| b.get("max_tasks").and_then(|v| v.as_u64()))
             .or_else(|| st.and_then(|s| s.get("cupo").and_then(|v| v.as_u64())))
             .map(|c| c.to_string())
@@ -446,7 +446,9 @@ fn tool_task_status(args: &Value, port: u16) -> Value {
     let Some(id) = task_arg(args) else {
         return tool_error("Falta 'task_id'.");
     };
-    let t = match api_json(port, "GET", &format!("/api/tasks/{id}"), None) {
+    let t = match api_json(port, "GET", &format!("/api/tasks/{id}/summary"), None)
+        .or_else(|_| api_json(port, "GET", &format!("/api/tasks/{id}"), None))
+    {
         Ok(v) => v,
         Err(e) => return tool_error(e),
     };
@@ -473,7 +475,9 @@ fn tool_task_result(args: &Value, port: u16) -> Value {
     let Some(id) = task_arg(args) else {
         return tool_error("Falta 'task_id'.");
     };
-    let t = match api_json(port, "GET", &format!("/api/tasks/{id}"), None) {
+    let t = match api_json(port, "GET", &format!("/api/tasks/{id}/summary"), None)
+        .or_else(|_| api_json(port, "GET", &format!("/api/tasks/{id}"), None))
+    {
         Ok(v) => v,
         Err(e) => return tool_error(e),
     };
@@ -583,11 +587,11 @@ fn tool_ask(args: &Value, port: u16) -> Value {
         .and_then(|b| b.as_array())
         .cloned()
         .unwrap_or_default();
+    let is_proxy_api = |b: &Value| {
+        b.b("enabled", true) && matches!(b.s("kind").as_str(), "openai" | "ollama" | "anthropic")
+    };
     let chosen = if want.is_empty() {
-        brains
-            .iter()
-            .find(|b| b.s("kind") != "claude_code")
-            .cloned()
+        brains.iter().find(|b| is_proxy_api(b)).cloned()
     } else {
         brains
             .iter()
@@ -596,25 +600,29 @@ fn tool_ask(args: &Value, port: u16) -> Value {
     };
     let Some(b) = chosen else {
         return tool_error(
-            "No hay ningún cerebro de API (DeepSeek/Gemini) para responder. Configura uno o indica 'brain'.",
+            "No hay ningún cerebro de API (DeepSeek/OpenAI/Anthropic/Ollama) para responder. Configura uno o indica 'brain'.",
         );
     };
-    if b.s("kind") == "claude_code" {
+    let kind = b.s("kind");
+    if !matches!(kind.as_str(), "openai" | "ollama" | "anthropic") {
         return tool_error(
-            "Ese cerebro es de Claude Code y no admite preguntas síncronas. Usa 'delegate' o elige un cerebro de API.",
+            "Ese cerebro es un agente CLI y no admite preguntas síncronas por proxy. Usa 'delegate' o elige un cerebro de API.",
         );
     }
     let id = b.s("id");
     let model = {
         let m = b.s("model");
-        if m.is_empty() {
-            b.arr("models")
+        if !m.is_empty() {
+            m
+        } else {
+            let ladder = b.arr("ladder");
+            let models = b.arr("models");
+            ladder
                 .first()
                 .and_then(|v| v.as_str())
+                .or_else(|| models.first().and_then(|v| v.as_str()))
                 .unwrap_or("")
                 .to_string()
-        } else {
-            m
         }
     };
     let mut body = json!({
@@ -625,7 +633,20 @@ fn tool_ask(args: &Value, port: u16) -> Value {
     if !model.is_empty() {
         set(&mut body, "model", json!(model));
     }
-    let path = format!("/proxy/{}/v1/chat/completions", url_escape(&id));
+    let base_url = b.s("base_url");
+    let base_trim = base_url.trim().trim_end_matches('/');
+    let endpoint = if kind == "anthropic" {
+        if base_trim.ends_with("/v1") {
+            "/messages"
+        } else {
+            "/v1/messages"
+        }
+    } else if base_trim.ends_with("/v1") || base_trim.ends_with("/openai") {
+        "/chat/completions"
+    } else {
+        "/v1/chat/completions"
+    };
+    let path = format!("/proxy/{}{}", url_escape(&id), endpoint);
     let (code, raw) = match http_text(port, "POST", &path, Some(&body.to_string()), ASK_TIMEOUT) {
         Ok(x) => x,
         Err(HttpError::Offline) => return tool_error(NO_SERVER),
@@ -734,6 +755,17 @@ fn answer_text(v: &Value) -> Option<String> {
     {
         return Some(t.to_string());
     }
+    // Anthropic Messages shape: {"content": [{"type": "text", "text": "..."}]}
+    if let Some(arr) = v.get("content").and_then(|c| c.as_array()) {
+        let joined: String = arr
+            .iter()
+            .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>()
+            .join("");
+        if !joined.is_empty() {
+            return Some(joined);
+        }
+    }
     pick_str(v, &["content", "text", "output", "answer"])
 }
 
@@ -812,8 +844,13 @@ fn is_queued(t: &Value) -> bool {
     )
 }
 
-/// Per-brain snapshot entry, tolerating a few plausible state shapes.
+/// Per-brain snapshot entry, supporting both array (`/api/state` `brains: [{id, ...}]`) and map shapes.
 fn brain_state<'a>(state: &'a Value, id: &str) -> Option<&'a Value> {
+    if let Some(arr) = state.get("brains").and_then(|b| b.as_array()) {
+        if let Some(found) = arr.iter().find(|item| item.s("id") == id) {
+            return Some(found);
+        }
+    }
     state
         .get("brains")
         .and_then(|b| b.get(id))
@@ -822,7 +859,7 @@ fn brain_state<'a>(state: &'a Value, id: &str) -> Option<&'a Value> {
         .filter(|v| v.is_object())
 }
 
-/// Quota percentage, accepting a plain number or a `{used, limit}` object.
+/// Quota percentage, accepting a plain number, a `{used, limit}` object, or `/api/state`'s `[{group, pct}]` array.
 fn pct(v: &Value) -> Option<f64> {
     for k in ["quota_pct", "used_pct", "pct", "usage_pct"] {
         if let Some(x) = v.get(k).and_then(|x| x.as_f64()) {
@@ -832,6 +869,13 @@ fn pct(v: &Value) -> Option<f64> {
     let q = v.get("quota")?;
     if let Some(x) = q.as_f64() {
         return Some(x);
+    }
+    if let Some(arr) = q.as_array() {
+        return arr
+            .iter()
+            .filter_map(|item| item.get("pct").and_then(|x| x.as_f64()))
+            .filter(|x| x.is_finite())
+            .reduce(f64::max);
     }
     let used = q.get("used").and_then(|x| x.as_f64());
     let limit = q

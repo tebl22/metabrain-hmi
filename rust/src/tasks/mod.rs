@@ -57,12 +57,41 @@ pub struct QueueSummary {
 pub struct TaskManager {
     pub(super) root: PathBuf,
     pub(super) procs: Mutex<HashMap<String, Child>>,
+    /// Active running task IDs across ALL runners (`claude_code`, `codex`, `antigravity`, `gemini_cli`, `openai`).
+    pub(super) active_tasks: Mutex<HashMap<String, String>>,
     pub(super) sched: Mutex<Sched>,
     pub(super) cv: Condvar,
     pub(super) escalator: Mutex<Option<Arc<Escalator>>>,
     /// Config snapshot for the verifier (`verify` overrides).
     pub(super) verify_cfg: Mutex<Value>,
     pub(super) turn_state: Mutex<()>,
+}
+
+pub(super) struct ActiveTaskGuard<'a> {
+    tm: &'a TaskManager,
+    id: String,
+}
+
+impl<'a> ActiveTaskGuard<'a> {
+    pub(super) fn enter(tm: &'a TaskManager, id: &str, brain: &str) -> Self {
+        let mut g = tm.active_tasks.lock().unwrap_or_else(|e| e.into_inner());
+        g.insert(id.to_string(), brain.to_string());
+        Self {
+            tm,
+            id: id.to_string(),
+        }
+    }
+}
+
+impl Drop for ActiveTaskGuard<'_> {
+    fn drop(&mut self) {
+        let mut g = self
+            .tm
+            .active_tasks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        g.remove(&self.id);
+    }
 }
 
 pub(super) struct WaitItem {
@@ -104,6 +133,7 @@ impl TaskManager {
         let tm = TaskManager {
             root,
             procs: Mutex::new(HashMap::new()),
+            active_tasks: Mutex::new(HashMap::new()),
             sched: Mutex::new(Sched {
                 limit,
                 running_total: 0,
@@ -167,6 +197,9 @@ impl TaskManager {
                 continue;
             }
             if !id.is_empty() {
+                if let Some(rid) = m.os("route_id") {
+                    crate::learn::discard_pending("", Some(&rid));
+                }
                 if status == "failed" {
                     self.emit(
                         &id,
@@ -371,7 +404,7 @@ impl TaskManager {
 
     pub(super) fn save(&self, meta: &Value) {
         let id = meta.s("id");
-        if id.is_empty() {
+        if !crate::util::valid_id(&id) {
             return;
         }
         let result =
@@ -382,7 +415,7 @@ impl TaskManager {
     }
 
     pub(super) fn emit(&self, id: &str, ev: Value) {
-        if id.is_empty() || id.contains('/') || id.contains('\\') {
+        if !crate::util::valid_id(id) {
             return;
         }
         let result = (|| -> std::io::Result<()> {
@@ -405,12 +438,9 @@ impl TaskManager {
     pub(super) fn fail(&self, id: &str, msg: &str) {
         self.emit(id, mk_event("error", json!({ "text": msg })));
         let mut m = self.get(id).unwrap_or(Value::Null);
-        let route_id = m.os("route_id");
-        let project = std::path::Path::new(&m.s("cwd"))
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        crate::learn::discard_pending(&project, route_id.as_deref());
+        if let Some(rid) = m.os("route_id") {
+            crate::learn::discard_pending("", Some(&rid));
+        }
         // Provider limits / overload / auth errors take the brain out of command for a while.
         crate::succession::note_error(&m.s("brain"), msg, now());
         put(&mut m, "status", json!("failed"));
@@ -454,10 +484,22 @@ impl TaskManager {
         if min_secs == 0 {
             return None;
         }
-        let running: Vec<String> = {
-            let procs = self.procs.lock().unwrap_or_else(|e| e.into_inner());
-            procs.keys().cloned().collect()
+        let mut running: Vec<String> = {
+            let active = self.active_tasks.lock().unwrap_or_else(|e| e.into_inner());
+            active
+                .iter()
+                .filter(|(_, b)| b.as_str() == brain)
+                .map(|(id, _)| id.clone())
+                .collect()
         };
+        {
+            let procs = self.procs.lock().unwrap_or_else(|e| e.into_inner());
+            for id in procs.keys() {
+                if !running.contains(id) {
+                    running.push(id.clone());
+                }
+            }
+        }
         let now_t = std::time::SystemTime::now();
         let mut worst: Option<u64> = None;
         for id in running {
@@ -479,13 +521,21 @@ impl TaskManager {
     }
 
     pub fn get(&self, id: &str) -> Option<Value> {
-        if id.is_empty() || id.contains('/') || id.contains('\\') || id.contains("..") {
+        if !crate::util::valid_id(id) {
             return None;
         }
         read_json(&self.meta_path(id))
     }
 
     pub fn running(&self, id: &str) -> bool {
+        if self
+            .active_tasks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(id)
+        {
+            return true;
+        }
         let procs = match self.procs.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
@@ -593,6 +643,10 @@ impl TaskManager {
 
     /// Events written after `offset` bytes; returns them plus the new offset.
     pub fn events_since(&self, id: &str, offset: u64) -> (Vec<Value>, u64) {
+        if !crate::util::valid_id(id) {
+            return (Vec::new(), offset);
+        }
+        const MAX_EVENTS_READ: u64 = 8 * 1024 * 1024;
         let p = self.events_path(id);
         let mut f = match fs::File::open(&p) {
             Ok(f) => f,
@@ -604,7 +658,7 @@ impl TaskManager {
             return (Vec::new(), start);
         }
         let mut buf = Vec::new();
-        if f.read_to_end(&mut buf).is_err() {
+        if f.take(MAX_EVENTS_READ).read_to_end(&mut buf).is_err() {
             return (Vec::new(), start);
         }
         let consumed = match buf.iter().rposition(|&b| b == b'\n') {

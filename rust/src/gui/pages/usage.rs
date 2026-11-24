@@ -363,14 +363,18 @@ fn gauge_card(ui: &mut egui::Ui, b: &Value, color: Color32, w: f32) {
                         let rem = (100.0 - v).clamp(0.0, 100.0);
                         ui.label(faint(format!("{label} · queda {rem:.0} %")));
                     } else {
-                        // No plan limits published for this brain: show what it is doing now.
-                        let day0 = crate::util::now() - crate::util::now() % 86400.0;
-                        let today: f64 = b
-                            .arr("calls")
-                            .iter()
-                            .filter(|c| c.f("ts").unwrap_or(0.0) >= day0)
-                            .filter_map(|c| c.f("tokens"))
-                            .sum();
+                        // No plan limits published for this brain: show today's ledger total (falling back to live calls).
+                        let today_ledger = b.get("usage").and_then(|u| u.f("today")).unwrap_or(0.0);
+                        let today: f64 = if today_ledger > 0.0 {
+                            today_ledger
+                        } else {
+                            let day0 = crate::util::now() - crate::util::now() % 86400.0;
+                            b.arr("calls")
+                                .iter()
+                                .filter(|c| c.f("ts").unwrap_or(0.0) >= day0)
+                                .filter_map(|c| c.f("tokens"))
+                                .sum()
+                        };
                         let live = if b.b("active", false) {
                             "trabajando ahora"
                         } else {

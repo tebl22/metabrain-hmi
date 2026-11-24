@@ -65,15 +65,19 @@ pub(super) fn send_json(req: Request, status: u16, value: &Value, extra: &[(&str
 }
 
 pub(super) fn read_body(req: &mut Request) -> Option<Value> {
-    let n = req_header(req, "Content-Length")
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(0);
-    if n > 2_000_000 {
-        return None;
+    const MAX_JSON_BODY: u64 = 2_000_000;
+    if let Some(n) = req_header(req, "Content-Length").and_then(|s| s.parse::<u64>().ok()) {
+        if n > MAX_JSON_BODY {
+            return None;
+        }
     }
     let mut raw = Vec::new();
-    if n > 0 {
-        req.as_reader().take(n as u64).read_to_end(&mut raw).ok()?;
+    req.as_reader()
+        .take(MAX_JSON_BODY + 1)
+        .read_to_end(&mut raw)
+        .ok()?;
+    if raw.len() as u64 > MAX_JSON_BODY {
+        return None;
     }
     if raw.is_empty() {
         return Some(json!({}));
@@ -185,6 +189,15 @@ pub(super) struct TaskEvents {
     pub(super) pos: usize,
     pub(super) idle: std::time::Instant,
     pub(super) ended: Option<std::time::Instant>,
+    pub(super) active_counter: Option<&'static std::sync::atomic::AtomicUsize>,
+}
+
+impl Drop for TaskEvents {
+    fn drop(&mut self) {
+        if let Some(c) = self.active_counter.take() {
+            c.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        }
+    }
 }
 
 impl Read for TaskEvents {

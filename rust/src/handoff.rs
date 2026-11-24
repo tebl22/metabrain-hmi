@@ -90,13 +90,14 @@ pub fn collect_with(path: &Path, max_lines: usize) -> Value {
         if i > max_lines {
             break;
         }
-        i += 1;
         // Python opened the file with errors="replace".
         let raw = String::from_utf8_lossy(&buf);
         let raw = raw.trim_end_matches(['\n', '\r']);
-        if raw.starts_with("{\"type\":\"api-request") {
+        if raw.starts_with("{\"type\":\"api-request") || raw.starts_with("{\"type\": \"api-request")
+        {
             continue;
         }
+        i += 1;
         let Ok(d) = serde_json::from_str::<Value>(raw) else {
             continue;
         };

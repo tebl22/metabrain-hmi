@@ -648,7 +648,16 @@ pub fn handle(sup: &Supervisor, brain_id: &str, subpath: &str, mut req: Request)
         return;
     }
 
-    if subpath.contains('\r') || subpath.contains('\n') || subpath.split('/').any(|s| s == "..") {
+    let sub_low = subpath.to_ascii_lowercase();
+    if subpath.contains('\r')
+        || subpath.contains('\n')
+        || subpath.contains('\\')
+        || subpath.contains('#')
+        || sub_low.contains("%2e")
+        || sub_low.contains("%2f")
+        || sub_low.contains("%5c")
+        || subpath.split('/').any(|s| s == "..")
+    {
         json_error(req, 400, "invalid proxy path", anthropic);
         return;
     }
@@ -820,6 +829,15 @@ pub fn handle(sup: &Supervisor, brain_id: &str, subpath: &str, mut req: Request)
         if let Some(h) = header("Cache-Control", "no-cache") {
             headers.push(h);
         }
+        if let Some(h) = header("X-Content-Type-Options", "nosniff") {
+            headers.push(h);
+        }
+        if let Some(h) = header("X-Frame-Options", "DENY") {
+            headers.push(h);
+        }
+        if let Some(h) = header("Content-Security-Policy", "default-src 'none'; sandbox") {
+            headers.push(h);
+        }
         let stream = SseStream::new(resp.into_reader(), meter, err);
         let body: Box<dyn Read + Send> = Box::new(stream);
         let response = Response::new(StatusCode(status), headers, body, None, None);
@@ -851,6 +869,13 @@ pub fn handle(sup: &Supervisor, brain_id: &str, subpath: &str, mut req: Request)
     if !ctype.is_empty() {
         add_header(&mut response, "Content-Type", &ctype);
     }
+    add_header(&mut response, "X-Content-Type-Options", "nosniff");
+    add_header(&mut response, "X-Frame-Options", "DENY");
+    add_header(
+        &mut response,
+        "Content-Security-Policy",
+        "default-src 'none'; sandbox",
+    );
     let result = req.respond(response);
     let err = if result.is_err() {
         Some("client left (BrokenPipeError)".into())

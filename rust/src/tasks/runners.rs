@@ -38,16 +38,18 @@ impl TaskManager {
         me.post_run(&id2, &id2);
     }
 
-    /// A routed "build" task that finished: run the project's check. Pass => verified success
-    /// for the router. Fail => verified failure, the task is marked failed and (up to
-    /// MAX_ESCALATIONS times) the next model gets the task plus the check's output.
-    fn post_run(self: &Arc<Self>, id: &str, turn_id: &str) {
+    /// A routed or verification-flagged "build" task that finished: run the project's check.
+    /// Pass => verified success for the router. Fail => verified failure, the task is marked failed
+    /// and (for top-level routed tasks, up to MAX_ESCALATIONS times) escalated to the next model.
+    pub(super) fn post_run(self: &Arc<Self>, id: &str, turn_id: &str) {
         let turn = self.turn_state.lock().unwrap_or_else(|e| e.into_inner());
         let Some(mut m) = self.get(id) else { return };
         if m.s("turn_id") != turn_id {
             return;
         }
-        if m.s("status") == "failed"
+        let is_parallel_child = !m.s("parent_run").is_empty();
+        if !is_parallel_child
+            && m.s("status") == "failed"
             && !m.s("route_cand").is_empty()
             && m["escalations"].as_u64().unwrap_or(0) == 0
             && crate::succession::classify_error(&m.s("error")).is_some()
@@ -62,9 +64,14 @@ impl TaskManager {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone();
-            if let Some(next) = callback.and_then(|f| f(&m, &m.s("error"))) {
-                put(&mut m, "escalated_to", json!(next));
-                self.save(&m);
+            let err_s = m.s("error");
+            let meta_snap = m.clone();
+            drop(turn);
+            if let Some(next) = callback.and_then(|f| f(&meta_snap, &err_s)) {
+                let _turn = self.turn_state.lock().unwrap_or_else(|e| e.into_inner());
+                let mut cur = self.get(id).unwrap_or(meta_snap);
+                put(&mut cur, "escalated_to", json!(next));
+                self.save(&cur);
                 self.emit(
                     id,
                     mk_event("status", json!({"status":"escalated","to":next})),
@@ -72,7 +79,8 @@ impl TaskManager {
             }
             return;
         }
-        if m.s("status") != "review" || m.s("mode") != "build" || m.s("route_cand").is_empty() {
+        let should_verify = m.b("verify_on_finish", false) || !m.s("route_cand").is_empty();
+        if m.s("status") != "review" || m.s("mode") != "build" || !should_verify {
             return;
         }
         let dir = {
@@ -83,7 +91,15 @@ impl TaskManager {
                 w
             }
         };
-        let project_name = Path::new(&m.s("cwd"))
+        let logical_home = {
+            let p = m.s("cwd_project");
+            if p.is_empty() {
+                m.s("cwd")
+            } else {
+                p
+            }
+        };
+        let project_name = Path::new(&logical_home)
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .filter(|s| !s.is_empty());
@@ -109,7 +125,7 @@ impl TaskManager {
 
         drop(turn);
         let result = crate::verify::run_until(&check, 900, || self.interrupted(id));
-        let _turn = self.turn_state.lock().unwrap_or_else(|e| e.into_inner());
+        let turn = self.turn_state.lock().unwrap_or_else(|e| e.into_inner());
         if self.interrupted(id) {
             return;
         }
@@ -130,35 +146,24 @@ impl TaskManager {
             mk_event("verify", json!({ "phase": "done", "ok": res.ok, "cmd": check.label, "secs": res.secs, "text": crate::verify::tail(&res.tail, 1500) })),
         );
 
-        let router = crate::router::Router::new(None);
-        let home = {
-            let c = m.s("cwd_project");
-            if c.is_empty() {
-                m.s("cwd")
-            } else {
-                c
-            }
-        };
-        let project = Path::new(&home)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "general".into());
         let route_id = m.s("route_id");
-        crate::learn::outcome_with_tokens(
-            &router,
-            Some(&project),
-            Some(&route_id)
-                .filter(|s| !s.is_empty())
-                .map(|s| s.as_str()),
-            res.ok,
-            crate::learn::W_VERIFIED,
-            if res.ok {
-                "verificación automática ok"
-            } else {
-                "verificación automática falló"
-            },
-            m.f("last_turn_tokens").unwrap_or(0.0) as i64,
-        );
+        if !is_parallel_child && !route_id.is_empty() {
+            let router = crate::router::Router::new(None);
+            let project = project_name.clone().unwrap_or_else(|| "general".into());
+            crate::learn::outcome_with_tokens(
+                &router,
+                Some(&project),
+                Some(route_id.as_str()),
+                res.ok,
+                crate::learn::W_VERIFIED,
+                if res.ok {
+                    "verificación automática ok"
+                } else {
+                    "verificación automática falló"
+                },
+                m.f("last_turn_tokens").unwrap_or(0.0) as i64,
+            );
+        }
 
         let mut m = self.get(id).unwrap_or(Value::Null);
         put(&mut m, "verified", json!(res.ok));
@@ -179,6 +184,12 @@ impl TaskManager {
         self.save(&m);
         self.emit(id, mk_event("status", json!({ "status": "failed" })));
 
+        // Parallel branch failures are managed by ParallelEngine; do not spawn detached escalations
+        // that would race on the shared worktree.
+        if is_parallel_child {
+            return;
+        }
+
         let n = m.get("escalations").and_then(|v| v.as_u64()).unwrap_or(0);
         if n >= MAX_ESCALATIONS {
             self.emit(
@@ -195,8 +206,11 @@ impl TaskManager {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
+        let meta_snap = m.clone();
+        drop(turn);
         if let Some(f) = esc {
-            if let Some(next) = f(&m, &res.tail) {
+            if let Some(next) = f(&meta_snap, &res.tail) {
+                let _turn = self.turn_state.lock().unwrap_or_else(|e| e.into_inner());
                 let mut m = self.get(id).unwrap_or(Value::Null);
                 put(&mut m, "escalated_to", json!(next));
                 self.save(&m);
@@ -244,6 +258,41 @@ impl TaskManager {
             let br = format!("metabrain/{id}");
             let result = (|| {
                 let base_commit = checked_git(&base, &["rev-parse", "--verify", "HEAD"])?;
+                // Ensure `.metabrain/` is excluded in the target repo's local `.git/info/exclude`
+                // so worktrees never pollute `git status` or `TaskManager::diff()`.
+                if let Ok(excl_rel) =
+                    checked_git(&base, &["rev-parse", "--git-path", "info/exclude"])
+                {
+                    let excl_p = {
+                        let p = PathBuf::from(excl_rel.trim());
+                        if p.is_absolute() {
+                            p
+                        } else {
+                            base.join(p)
+                        }
+                    };
+                    if let Some(parent) = excl_p.parent() {
+                        let _ = fs::create_dir_all(parent);
+                    }
+                    let existing = fs::read_to_string(&excl_p).unwrap_or_default();
+                    if !existing
+                        .lines()
+                        .any(|l| l.trim() == ".metabrain/" || l.trim() == ".metabrain")
+                    {
+                        if let Ok(mut f) = fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&excl_p)
+                        {
+                            let prefix = if existing.is_empty() || existing.ends_with('\n') {
+                                ""
+                            } else {
+                                "\n"
+                            };
+                            let _ = writeln!(f, "{prefix}.metabrain/");
+                        }
+                    }
+                }
                 let folder = base.join(".metabrain").join("wt");
                 fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
                 let wt = std::path::absolute(&folder)
@@ -333,17 +382,22 @@ impl TaskManager {
         put(&mut meta, "updated", json!(now()));
         self.save(&meta);
         self.emit(id, mk_event("status", json!({ "status": "running" })));
+        let brain_for_guard = meta.s("brain");
         drop(turn);
+        let _active_guard = super::ActiveTaskGuard::enter(self, id, &brain_for_guard);
 
         // "build" may edit files; "plan" only reads.
         let cli_mode = if mode == "plan" { "read" } else { "write" };
-        if cli_mode == "write" {
+        let allow_unsafe = crate::util::read_json(&crate::util::data_dir().join("metabrain.json"))
+            .and_then(|v| v.get("allow_unsafe_exec").and_then(|b| b.as_bool()))
+            .unwrap_or(false);
+        if cli_mode == "write" && allow_unsafe {
             let permissions = match agent {
                 crate::cli_agents::Agent::Codex if cfg!(windows) => {
-                    Some("Codex se ejecuta con acceso completo al sistema de archivos.")
+                    Some("Codex is running with unsafe full filesystem access (allow_unsafe_exec enabled).")
                 }
                 crate::cli_agents::Agent::Antigravity => {
-                    Some("Antigravity se ejecuta sin solicitar permisos para sus acciones.")
+                    Some("Antigravity is running without permission prompts (allow_unsafe_exec enabled).")
                 }
                 _ => None,
             };
@@ -570,6 +624,7 @@ impl TaskManager {
                 put(&mut m, "pid", json!(0));
                 put(&mut m, "updated", json!(now()));
                 self.save(&m);
+                crate::succession::clear_error(&m.s("brain"));
                 self.emit(id, mk_event("status", json!({ "status": "review" })));
             }
             Err(e) => {
@@ -613,10 +668,21 @@ impl TaskManager {
         config_dir: Option<String>,
         resume: Option<String>,
     ) {
-        let turn = self.turn_state.lock().unwrap_or_else(|e| e.into_inner());
-        if self.interrupted(id) {
-            return;
-        }
+        let (brain_for_guard, turn_id, base_tokens, base_usd) = {
+            let _turn = self.turn_state.lock().unwrap_or_else(|e| e.into_inner());
+            if self.interrupted(id) {
+                return;
+            }
+            let meta = self.get(id).unwrap_or(Value::Null);
+            (
+                meta.s("brain"),
+                meta.s("turn_id"),
+                meta.f("tokens").unwrap_or(0.0),
+                meta.f("usd").unwrap_or(0.0),
+            )
+        };
+        let _active_guard = super::ActiveTaskGuard::enter(self, id, &brain_for_guard);
+
         let exe = match resolve_claude() {
             Some(e) => e,
             None => {
@@ -624,11 +690,42 @@ impl TaskManager {
                 return;
             }
         };
+        if !crate::connect::is_safe_cmd_path(&exe) {
+            self.fail(
+                id,
+                "La ruta del ejecutable claude contiene caracteres no permitidos.",
+            );
+            return;
+        }
         let exe_s = exe.to_string_lossy().to_string();
+
+        // Sanitize model and resume session ID before passing to `cmd /d /c` or `claude`.
+        let clean_model = match crate::cli_agents::sanitize_model(model) {
+            Ok(m) => m,
+            Err(e) => {
+                self.fail(id, &e);
+                return;
+            }
+        };
+        let clean_resume = if let Some(s) = resume.as_deref() {
+            let trimmed = s.trim();
+            if trimmed.is_empty()
+                || trimmed.len() > 128
+                || !trimmed
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+            {
+                self.fail(id, "Invalid Claude session ID.");
+                return;
+            }
+            Some(trimmed.to_string())
+        } else {
+            None
+        };
 
         let mut cmd = if exe_s.to_lowercase().ends_with(".cmd") {
             let mut c = Command::new("cmd");
-            c.arg("/C").arg(&exe_s);
+            c.arg("/d").arg("/c").arg(&exe_s);
             c
         } else {
             Command::new(&exe)
@@ -644,10 +741,10 @@ impl TaskManager {
             } else {
                 "acceptEdits"
             });
-        if !model.trim().is_empty() {
-            cmd.arg("--model").arg(model);
+        if !clean_model.is_empty() {
+            cmd.arg("--model").arg(&clean_model);
         }
-        if let Some(s) = resume.as_deref() {
+        if let Some(s) = clean_resume.as_deref() {
             cmd.arg("--resume").arg(s);
         }
         if let Some(cd) = config_dir
@@ -682,40 +779,38 @@ impl TaskManager {
                 return;
             }
         };
+        let job = crate::util::attach_kill_job(&child).ok();
 
         let stdin = child.stdin.take();
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
         let pid = child.id();
 
-        let mut meta = self.get(id).unwrap_or(Value::Null);
-        let turn_id = meta.s("turn_id");
-        let base_tokens = meta.f("tokens").unwrap_or(0.0);
-        let base_usd = meta.f("usd").unwrap_or(0.0);
-        put(&mut meta, "pid", json!(pid));
-        put(&mut meta, "status", json!("running"));
-        put(&mut meta, "error", json!(""));
-        put(&mut meta, "updated", json!(now()));
-        self.save(&meta);
-        self.emit(id, mk_event("status", json!({ "status": "running" })));
-        log(&format!("tarea {id}: claude lanzado (pid {pid})"));
-
         {
+            let _turn = self.turn_state.lock().unwrap_or_else(|e| e.into_inner());
+            if self.interrupted(id) {
+                let _ = child.kill();
+                drop(job);
+                return;
+            }
+            let mut meta = self.get(id).unwrap_or(Value::Null);
+            put(&mut meta, "pid", json!(pid));
+            put(&mut meta, "status", json!("running"));
+            put(&mut meta, "error", json!(""));
+            put(&mut meta, "updated", json!(now()));
+            self.save(&meta);
+            self.emit(id, mk_event("status", json!({ "status": "running" })));
+            log(&format!("tarea {id}: claude lanzado (pid {pid})"));
             let mut procs = match self.procs.lock() {
                 Ok(g) => g,
                 Err(p) => p.into_inner(),
             };
             procs.insert(id.to_string(), child);
         }
-        drop(turn);
-        if let Some(mut sin) = stdin {
-            let _ = sin.write_all(prompt.as_bytes());
-            let _ = sin.write_all(b"\n");
-        }
 
-        // stderr tail (last 20 lines), read in its own thread
+        // Attach stderr reader BEFORE writing stdin so large prompts (>4 KB) cannot deadlock OS pipes.
         let err_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-        if let Some(se) = stderr {
+        let h_err = stderr.map(|se| {
             let buf = Arc::clone(&err_lines);
             std::thread::spawn(move || {
                 let reader = BufReader::new(se);
@@ -734,6 +829,16 @@ impl TaskManager {
                         Err(_) => break,
                     }
                 }
+            })
+        });
+
+        // Write prompt asynchronously so stdin can never block stdout draining.
+        if let Some(mut sin) = stdin {
+            let payload = prompt.to_string();
+            std::thread::spawn(move || {
+                let _ = sin.write_all(payload.as_bytes());
+                let _ = sin.write_all(b"\n");
+                let _ = sin.flush();
             });
         }
 
@@ -741,6 +846,7 @@ impl TaskManager {
         let mut run_usd: f64 = 0.0;
         let mut session = String::new();
         let mut last_write = Instant::now();
+        let mut result_err: Option<String> = None;
 
         if let Some(out) = stdout {
             let reader = BufReader::new(out);
@@ -757,6 +863,12 @@ impl TaskManager {
                 }
                 let (evs, sess, useg) = events_from_line(&line);
                 for mut e in evs {
+                    if e.s("type") == "error" && result_err.is_none() {
+                        let t = e.s("text");
+                        if !t.trim().is_empty() {
+                            result_err = Some(t);
+                        }
+                    }
                     if e["tool_id"].is_string() {
                         put(&mut e, "turn_id", json!(turn_id));
                     }
@@ -770,7 +882,10 @@ impl TaskManager {
                         self.save(&m);
                     }
                 }
-                if let Some((t, c, _)) = useg {
+                if let Some((t, c, is_err)) = useg {
+                    if is_err && result_err.is_none() {
+                        result_err = Some("Claude reported an execution error.".to_string());
+                    }
                     run_tokens += t;
                     run_usd += c;
                     self.emit(
@@ -823,12 +938,22 @@ impl TaskManager {
             drop(procs);
             std::thread::sleep(Duration::from_millis(100));
         }
+        drop(job);
+        if let Some(h) = h_err {
+            let wait_end = Instant::now() + Duration::from_millis(500);
+            while !h.is_finished() && Instant::now() < wait_end {
+                std::thread::sleep(Duration::from_millis(15));
+            }
+            if h.is_finished() {
+                let _ = h.join();
+            }
+        }
 
         let _turn = self.turn_state.lock().unwrap_or_else(|e| e.into_inner());
         if self.interrupted(id) {
             return;
         }
-        let ok = code == Some(0);
+        let ok = code == Some(0) && result_err.is_none();
         let err_tail = {
             let v = match err_lines.lock() {
                 Ok(g) => g.clone(),
@@ -836,43 +961,34 @@ impl TaskManager {
             };
             v.join("\n")
         };
-        if !ok && !err_tail.trim().is_empty() {
-            self.emit(
-                id,
-                mk_event("error", json!({ "text": clip(&err_tail, 4000) })),
-            );
-        }
 
         let mut fin = self.get(id).unwrap_or(Value::Null);
         if fin.is_null() {
             fin = json!({ "id": id });
         }
-        put(
-            &mut fin,
-            "status",
-            json!(if ok { "review" } else { "failed" }),
-        );
-        put(&mut fin, "pid", json!(0));
         if !session.is_empty() {
             put(&mut fin, "session_id", json!(session));
         }
         put(&mut fin, "tokens", json!(base_tokens + run_tokens as f64));
         put(&mut fin, "last_turn_tokens", json!(run_tokens));
         put(&mut fin, "usd", json!(base_usd + run_usd));
+        put(&mut fin, "pid", json!(0));
         put(&mut fin, "updated", json!(now()));
+
         if ok {
+            put(&mut fin, "status", json!("review"));
             put(&mut fin, "error", json!(""));
-        } else if fin.s("error").is_empty() && !err_tail.trim().is_empty() {
-            put(&mut fin, "error", json!(clip(&err_tail, 2000)));
+            self.save(&fin);
+            crate::succession::clear_error(&fin.s("brain"));
+            self.emit(id, mk_event("status", json!({ "status": "review" })));
+        } else {
+            self.save(&fin);
+            let msg = result_err
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| (!err_tail.trim().is_empty()).then(|| clip(&err_tail, 2000)))
+                .unwrap_or_else(|| format!("Claude exited with status {code:?}"));
+            self.fail(id, &msg);
         }
-        self.save(&fin);
-        self.emit(
-            id,
-            mk_event(
-                "status",
-                json!({ "status": if ok { "review" } else { "failed" } }),
-            ),
-        );
         log(&format!("tarea {id}: claude terminó (código {code:?})"));
     }
 
@@ -884,6 +1000,8 @@ impl TaskManager {
         effort: &str,
         prompt: &str,
     ) {
+        let brain_for_guard = self.get(id).map(|m| m.s("brain")).unwrap_or_default();
+        let _active_guard = super::ActiveTaskGuard::enter(self, id, &brain_for_guard);
         self.api_turn(id, cfg, model, effort, prompt, |url, headers, body| {
             let url = url.to_owned();
             let headers = headers
@@ -1053,10 +1171,11 @@ impl TaskManager {
                 let bu = m.f("usd").unwrap_or(0.0);
                 put(&mut m, "tokens", json!(bt + tokens as f64));
                 put(&mut m, "last_turn_tokens", json!(tokens));
-                put(&mut m, "usd", json!(usd.map(|v| bu + v)));
+                put(&mut m, "usd", json!(bu + usd.unwrap_or(0.0)));
                 put(&mut m, "status", json!("review"));
                 put(&mut m, "updated", json!(now()));
                 self.save(&m);
+                crate::succession::clear_error(&m.s("brain"));
                 self.emit(id, mk_event("status", json!({ "status": "review" })));
             }
             Err(e) => {
@@ -1110,12 +1229,14 @@ impl TaskManager {
             match t.strip_prefix("Tú: ") {
                 Some(u) => out.push(json!({"role": "user", "content": u})),
                 None => {
-                    if ev.b("delta", false)
-                        && out.last().is_some_and(|m| m.s("role") == "assistant")
-                    {
+                    if out.last().is_some_and(|m| m.s("role") == "assistant") {
                         if let Some(last) = out.last_mut() {
                             let prev = last.s("content");
-                            last["content"] = json!(format!("{prev}{t}"));
+                            if ev.b("delta", false) {
+                                last["content"] = json!(format!("{prev}{t}"));
+                            } else {
+                                last["content"] = json!(format!("{prev}\n{t}"));
+                            }
                         }
                     } else {
                         out.push(json!({"role": "assistant", "content": t}));
@@ -1204,6 +1325,11 @@ impl TaskManager {
                     drop_count += 1;
                 }
                 out.drain(..drop_count);
+                // Ensure the compacted conversation still starts with a `"user"` turn
+                // (required by strict OpenAI/DeepSeek reasoning endpoints).
+                while out.len() > 1 && out[0]["role"] == "assistant" {
+                    out.remove(0);
+                }
             }
         }
         out

@@ -542,6 +542,13 @@ fn kill_child_tree(child: &mut Child) {
             .stderr(Stdio::null());
         let _ = hidden(&mut cmd);
         let _ = cmd.status();
+    } else {
+        let pgid = format!("-{pid}");
+        let _ = Command::new("kill")
+            .args(["-9", &pgid])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
     let _ = child.kill();
     let _ = wait_status(child, Duration::from_secs(2));
@@ -648,7 +655,7 @@ pub fn run_blocking_until(
     }
 
     let err_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
-    if let Some(se) = stderr {
+    let h_err = stderr.map(|se| {
         let buf = Arc::clone(&err_buf);
         std::thread::spawn(move || {
             let reader = BufReader::new(se);
@@ -665,8 +672,8 @@ pub fn run_blocking_until(
                     }
                 }
             }
-        });
-    }
+        })
+    });
 
     // Deliver the prompt asynchronously AFTER stdout/stderr readers are attached
     // so large prompts (>4 KB) cannot deadlock OS pipes.
@@ -717,10 +724,20 @@ pub fn run_blocking_until(
     let status = match wait_status(&mut child, Duration::from_secs(5)) {
         Some(st) => Some(st),
         None => {
-            let _ = child.kill();
+            kill_child_tree(&mut child);
             child.wait().ok()
         }
     };
+    drop(_job);
+    if let Some(h) = h_err {
+        let wait_end = Instant::now() + Duration::from_millis(500);
+        while !h.is_finished() && Instant::now() < wait_end {
+            std::thread::sleep(Duration::from_millis(15));
+        }
+        if h.is_finished() {
+            let _ = h.join();
+        }
+    }
     let exit_ok = status.map(|s| s.success()).unwrap_or(false);
 
     let err_text = err_buf
@@ -728,7 +745,10 @@ pub fn run_blocking_until(
         .map(|b| b.trim().to_string())
         .unwrap_or_default();
 
+    // If the CLI exited 0 AND produced assistant text, a transient mid-stream `"error"` event
+    // (e.g., Codex `"Reconnecting... 1/5"`) must not override a completed turn.
     let (ok, err) = match done {
+        Some((false, _)) if exit_ok && !text.trim().is_empty() => (true, None),
         Some((ok, e)) => (ok, e),
         None => (
             exit_ok,

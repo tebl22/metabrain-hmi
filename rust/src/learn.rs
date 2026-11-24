@@ -258,8 +258,16 @@ fn deepseek_classify(cfg: &Value, norm: &str, chain: &[Value]) -> Option<(u8, St
     let key = secret(&brain.s("key_env"))?;
     let base = brain.os("base_url")?;
     let url = format!("{}/chat/completions", base.trim_end_matches('/'));
+    let ladder = brain.arr("ladder");
+    let model = ladder
+        .iter()
+        .filter_map(|v| v.as_str())
+        .find(|m| m.to_lowercase().contains("flash") || m.to_lowercase().contains("chat"))
+        .or_else(|| ladder.last().and_then(|v| v.as_str()))
+        .unwrap_or("deepseek-flash")
+        .to_string();
     let body = json!({
-        "model": "deepseek-flash",
+        "model": model,
         "max_tokens": 80,
         "temperature": 0,
         "thinking": {"type": "disabled"},
@@ -743,6 +751,7 @@ pub fn escalate_after(
 /// Drop pending routing attempts for a task that crashed, failed, or was stopped,
 /// so `sweep()` does not falsely reward it as an implicit success 30 minutes later.
 pub fn discard_pending(project: &str, route_id: Option<&str>) {
+    let _flock = crate::util::FileLock::acquire(&pending_path(), 1500);
     let mut items = load_pending();
     if items.is_empty() {
         return;
@@ -785,8 +794,9 @@ pub fn signal_from_bash(router: &Router, project: &str, command: &str, output: &
     let nonzero_fail = NONZERO_FAIL_RE
         .get_or_init(|| regex::Regex::new(r"\b[1-9]\d*\s+failed\b").expect("valid regex"))
         .is_match(&out);
-    let bad = nonzero_fail || FAIL_WORDS.iter().any(|k| out.contains(k));
-    let ffmpeg_like = cmd.contains("ffmpeg") || cmd.contains("blender");
+    let go_fail =
+        out.contains("--- fail:") || out.contains("\nfail\t") || out.starts_with("fail\t");
+    let bad = nonzero_fail || go_fail || FAIL_WORDS.iter().any(|k| out.contains(k));
     if bad {
         outcome_w(
             router,
@@ -799,7 +809,7 @@ pub fn signal_from_bash(router: &Router, project: &str, command: &str, output: &
         return;
     }
     let good = OK_WORDS.iter().any(|k| out.contains(k));
-    if good || ffmpeg_like {
+    if good {
         outcome_w(
             router,
             Some(project),

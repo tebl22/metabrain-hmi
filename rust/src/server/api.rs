@@ -6,9 +6,12 @@ use crate::core::Supervisor;
 use crate::util::{now, truthy, J};
 use serde_json::{json, Value};
 use std::io::Read;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tiny_http::{Header, Request, Response, StatusCode};
+
+static ACTIVE_SSE_STREAMS: AtomicUsize = AtomicUsize::new(0);
+const MAX_SSE_STREAMS: usize = 16;
 
 fn truthy_v(v: Option<&Value>) -> bool {
     truthy(v)
@@ -18,9 +21,15 @@ fn attachment_paths(body: &Value) -> Vec<String> {
     body.arr("files")
         .into_iter()
         .filter_map(|file| {
-            file.as_str()
-                .filter(|path| !path.trim().is_empty())
-                .map(String::from)
+            let s = file.as_str()?.trim();
+            if s.is_empty()
+                || s.starts_with(r"\\")
+                || s.starts_with("//")
+                || s.bytes().any(|b| b < 0x20 || b == 0x7f)
+            {
+                return None;
+            }
+            Some(s.to_string())
         })
         .collect()
 }
@@ -68,15 +77,7 @@ pub(super) fn dispatch(
     }
 
     if path == "/api/router" {
-        let q = req
-            .url()
-            .split_once('?')
-            .map(|(_, q)| q.to_string())
-            .unwrap_or_default();
-        let project = q
-            .split('&')
-            .find_map(|kv| kv.strip_prefix("project="))
-            .map(|v| v.replace("%20", " "));
+        let project = qparam(req.url(), "project");
         send_json(
             req,
             200,
@@ -117,6 +118,10 @@ pub(super) fn dispatch(
     }
     if let Some(rest) = path.strip_prefix("/api/parallel/") {
         let (id, action) = rest.split_once('/').unwrap_or((rest, ""));
+        if !crate::util::valid_id(id) {
+            send_json(req, 400, &json!({"error": "invalid run id"}), &[]);
+            return;
+        }
         match (method, action) {
             ("GET", "") => match sup.parallel.get(id) {
                 Some(r) => send_json(req, 200, &r, &[]),
@@ -225,15 +230,7 @@ pub(super) fn dispatch(
     }
 
     if path == "/api/learn" {
-        let q = req
-            .url()
-            .split_once('?')
-            .map(|(_, q)| q.to_string())
-            .unwrap_or_default();
-        let project = q
-            .split('&')
-            .find_map(|kv| kv.strip_prefix("project="))
-            .map(|v| v.replace("%20", " "));
+        let project = qparam(req.url(), "project");
         send_json(
             req,
             200,
@@ -244,16 +241,7 @@ pub(super) fn dispatch(
     }
 
     if path == "/api/relay" {
-        let q = req
-            .url()
-            .split_once('?')
-            .map(|(_, q)| q.to_string())
-            .unwrap_or_default();
-        let key = q
-            .split('&')
-            .find_map(|kv| kv.strip_prefix("key="))
-            .unwrap_or("")
-            .to_string();
+        let key = qparam(req.url(), "key").unwrap_or_default();
         match crate::relay::read(&key) {
             Some(md) => send_json(req, 200, &json!({"key": key, "markdown": md}), &[]),
             None => send_json(req, 404, &json!({"error": "not found"}), &[]),
@@ -282,7 +270,7 @@ pub(super) fn dispatch(
     }
 
     if path == "/api/lan" {
-        let port = sup.cfg.key("port").as_u64().unwrap_or(0);
+        let port = crate::config::valid_port(&sup.cfg.get()).unwrap_or(8790);
         let pin = if local {
             json!(sup.cfg.key("lan").s("pin"))
         } else {
@@ -305,7 +293,7 @@ pub(super) fn dispatch(
     }
 
     if path == "/api/qr.svg" {
-        let port = sup.cfg.key("port").as_u64().unwrap_or(0);
+        let port = crate::config::valid_port(&sup.cfg.get()).unwrap_or(8790);
         match qr_svg(&format!("http://{}:{}/", lan_ip(), port)) {
             Ok(svg) => send_raw(req, 200, svg.into_bytes(), "image/svg+xml", &[]),
             Err(e) => send_json(req, 500, &json!({"error": e}), &[]),
@@ -500,9 +488,23 @@ fn handle_tasks_create(sup: &Arc<Supervisor>, mut req: Request) {
 
 fn handle_task_action(sup: &Arc<Supervisor>, mut req: Request, method: &str, rest: &str) {
     let (id, action) = rest.split_once('/').unwrap_or((rest, ""));
+    if !crate::util::valid_id(id) {
+        send_json(req, 400, &json!({"error": "invalid task id"}), &[]);
+        return;
+    }
     let id = id.to_string();
     match (method, action) {
         ("GET", "events") => {
+            if sup.tasks.get(&id).is_none() {
+                send_json(req, 404, &json!({"error": "not found"}), &[]);
+                return;
+            }
+            let prev = ACTIVE_SSE_STREAMS.fetch_add(1, Ordering::AcqRel);
+            if prev >= MAX_SSE_STREAMS {
+                ACTIVE_SSE_STREAMS.fetch_sub(1, Ordering::AcqRel);
+                send_json(req, 503, &json!({"error": "too many event streams"}), &[]);
+                return;
+            }
             let start = qparam(req.url(), "from")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0u64);
@@ -514,6 +516,7 @@ fn handle_task_action(sup: &Arc<Supervisor>, mut req: Request, method: &str, res
                 pos: 0,
                 idle: std::time::Instant::now(),
                 ended: None,
+                active_counter: Some(&ACTIVE_SSE_STREAMS),
             };
             let headers = vec![
                 Header::from_bytes(
@@ -522,6 +525,11 @@ fn handle_task_action(sup: &Arc<Supervisor>, mut req: Request, method: &str, res
                 )
                 .ok(),
                 Header::from_bytes(&b"Cache-Control"[..], &b"no-cache"[..]).ok(),
+                Header::from_bytes(&b"X-Content-Type-Options"[..], &b"nosniff"[..]).ok(),
+                Header::from_bytes(&b"X-Frame-Options"[..], &b"DENY"[..]).ok(),
+                Header::from_bytes(&b"Content-Security-Policy"[..], &b"default-src 'none'"[..])
+                    .ok(),
+                Header::from_bytes(&b"Referrer-Policy"[..], &b"no-referrer"[..]).ok(),
             ]
             .into_iter()
             .flatten()
@@ -529,6 +537,20 @@ fn handle_task_action(sup: &Arc<Supervisor>, mut req: Request, method: &str, res
             let resp = Response::new(StatusCode(200), headers, reader, None, None);
             let _ = req.respond(resp);
         }
+        ("GET", "summary") => match sup.tasks.get(&id) {
+            Some(mut m) => {
+                let (evs, _) = sup.tasks.events_since(&id, 0);
+                let tail_start = evs.len().saturating_sub(30);
+                m["events"] = json!(evs[tail_start..]);
+                let text = sup.tasks.extract_assistant_text(&id);
+                if !text.trim().is_empty() {
+                    let clipped: String = text.chars().take(60_000).collect();
+                    m["result"] = json!(clipped);
+                }
+                send_json(req, 200, &m, &[]);
+            }
+            None => send_json(req, 404, &json!({"error": "not found"}), &[]),
+        },
         ("GET", "diff") => send_raw(
             req,
             200,
@@ -636,17 +658,18 @@ fn handle_upload(mut req: Request, local: bool) {
         );
         return;
     }
-    let mut raw = Vec::with_capacity(n);
+    let mut raw = Vec::with_capacity(n.min(64 * 1024));
     if req
         .as_reader()
         .take(n as u64)
         .read_to_end(&mut raw)
         .is_err()
+        || raw.len() != n
     {
         send_json(
             req,
             400,
-            &json!({"error": "No se pudo leer el archivo."}),
+            &json!({"error": "Could not read the complete upload body."}),
             &[],
         );
         return;
@@ -847,25 +870,11 @@ fn handle_extensions(sup: &Arc<Supervisor>, mut req: Request, method: &str) {
 
 fn handle_timeline(sup: &Arc<Supervisor>, req: Request) {
     // Gantt data for one brain: /api/timeline?brain=<id>&window=<seconds, default 1800>
-    let q = req
-        .url()
-        .split_once('?')
-        .map(|(_, q)| q.to_string())
-        .unwrap_or_default();
-    let mut bid = String::new();
-    let mut window = 1800.0_f64;
-    for kv in q.split('&') {
-        match kv.split_once('=') {
-            Some(("brain", v)) => bid = v.replace("%20", " "),
-            Some(("window", v)) => {
-                window = v
-                    .parse::<f64>()
-                    .unwrap_or(1800.0)
-                    .clamp(60.0, 86400.0 * 7.0)
-            }
-            _ => {}
-        }
-    }
+    let bid = qparam(req.url(), "brain").unwrap_or_default();
+    let window = qparam(req.url(), "window")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1800.0)
+        .clamp(60.0, 86400.0 * 7.0);
     match sup.brain(&bid) {
         Some(b) => {
             let sessions = b.my_sessions();

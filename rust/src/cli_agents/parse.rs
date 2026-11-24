@@ -417,10 +417,11 @@ fn parse_gemini(line: &str) -> Option<Event> {
         }
         "result" => {
             let status = ev.status.as_deref().unwrap_or("");
-            let err = ev.error.as_ref().and_then(|e| match e {
-                ErrorField::Text(s) => Some(s.clone()),
-                _ => None,
-            });
+            let err = ev
+                .error
+                .as_ref()
+                .and_then(ErrorField::message)
+                .map(str::to_string);
             if status == "error" || status == "failed" || err.is_some() {
                 let msg = err.unwrap_or_else(|| "La tarea falló.".to_string());
                 return Some(Event::Done {

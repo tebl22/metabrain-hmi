@@ -1,7 +1,7 @@
 {
   "lang": "en",
   "port": 8790,
-  "lan": {"enabled": false, "pin": "123456"},
+  "lan": {"enabled": false, "pin": ""},
   "mode": "normal",
   "rules": {"downgrade_at": 80, "pause_at": 100, "auto_resume": true},
   "handoff": {"summarizer": "deepseek"},

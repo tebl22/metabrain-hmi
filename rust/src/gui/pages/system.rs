@@ -680,7 +680,6 @@ pub(super) fn extensions(app: &mut App, ui: &mut egui::Ui) {
         app.post("api/extensions", body, |r| {
             (r.os("result").unwrap_or_else(|| r.s("error")), INFO)
         });
-        app.forget("api/extensions");
     }
 }
 
@@ -786,7 +785,7 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                     .stroke(Stroke::new(1.0, if on { MASTER } else { RULE }))
                     .corner_radius(CornerRadius::same(R));
                     if ui.add(btn).clicked() {
-                        acts.push(json!({"a": "mode", "mode": id}));
+                        acts.push(json!({"a": "mode", "mode": id, "confirm": id == "max"}));
                     }
                 }
             });
@@ -794,17 +793,19 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
             for b in snap.arr("brains") {
                 let bid = b.s("id");
                 let bname = b.os("name").unwrap_or_else(|| bid.clone());
-                let cur_pilot = {
-                    let p = b.s("pilot");
-                    if p.is_empty() {
-                        "off".to_string()
-                    } else {
-                        p
-                    }
+                let cur_pilot = b
+                    .get("pilot")
+                    .and_then(|p| p.os("mode"))
+                    .or_else(|| b.os("pilot"))
+                    .unwrap_or_else(|| "off".to_string());
+                let cur_pilot = if cur_pilot == "auto" {
+                    "act".to_string()
+                } else {
+                    cur_pilot
                 };
                 row(ui, &format!("Autopilot · {bname}"), "Off = manual · Advise = log suggestions · Auto = step down automatically under load", |ui| {
                 ui.horizontal(|ui| {
-                    for (pid, lbl) in [("off", "Off"), ("advise", "Advise"), ("auto", "Auto")] {
+                    for (pid, lbl) in [("off", "Off"), ("advise", "Advise"), ("act", "Auto")] {
                         let on = cur_pilot == pid;
                         let btn = egui::Button::new(
                             egui::RichText::new(lbl)
@@ -922,9 +923,9 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                 "Pre-emptive account switch at",
                 "Headroom margin before quota exhaustion",
                 |ui| {
-                    let mut f = c.f("failover_pct").unwrap_or(85.0);
-                    let r = ui.add(egui::DragValue::new(&mut f).range(50.0..=99.0).suffix(" %"));
-                    if r.drag_stopped() || r.lost_focus() {
+                    let saved = c.f("failover_pct").unwrap_or(85.0);
+                    if let Some(f) = drag_setting(ui, "set_failover_pct", saved, 50.0..=99.0, " %")
+                    {
                         edits.push(Box::new(move |c| c["failover_pct"] = json!(f)));
                     }
                 },
@@ -953,28 +954,18 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
         "Budgets",
         "How MetaBrain reacts when a brain approaches its limit",
         |ui| {
-            let (mut down, mut pause) = (
+            let (down, pause) = (
                 rules.f("downgrade_at").unwrap_or(80.0),
                 rules.f("pause_at").unwrap_or(100.0),
             );
             row(ui, "Downgrade model at", "", |ui| {
-                let r = ui.add(
-                    egui::DragValue::new(&mut down)
-                        .range(1.0..=100.0)
-                        .suffix(" %"),
-                );
-                if r.drag_stopped() || r.lost_focus() {
-                    acts.push(json!({"a": "rules", "downgrade_at": down, "pause_at": pause}));
+                if let Some(nd) = drag_setting(ui, "set_downgrade_at", down, 1.0..=100.0, " %") {
+                    acts.push(json!({"a": "rules", "downgrade_at": nd, "pause_at": pause}));
                 }
             });
             row(ui, "Pause brain at", "", |ui| {
-                let r = ui.add(
-                    egui::DragValue::new(&mut pause)
-                        .range(1.0..=100.0)
-                        .suffix(" %"),
-                );
-                if r.drag_stopped() || r.lost_focus() {
-                    acts.push(json!({"a": "rules", "downgrade_at": down, "pause_at": pause}));
+                if let Some(np) = drag_setting(ui, "set_pause_at", pause, 1.0..=100.0, " %") {
+                    acts.push(json!({"a": "rules", "downgrade_at": down, "pause_at": np}));
                 }
             });
             row(
@@ -1040,9 +1031,9 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                 "Minimum success rate for cheapest tier",
                 "Escalate to next model when below this threshold",
                 |ui| {
-                    let mut t = rt.f("target").unwrap_or(0.85) * 100.0;
-                    let r = ui.add(egui::DragValue::new(&mut t).range(50.0..=99.0).suffix(" %"));
-                    if r.drag_stopped() || r.lost_focus() {
+                    let saved = rt.f("target").unwrap_or(0.85) * 100.0;
+                    if let Some(t) = drag_setting(ui, "set_router_target", saved, 50.0..=99.0, " %")
+                    {
                         edits.push(Box::new(move |c| {
                             ensure(c, "router");
                             c["router"]["target"] = json!(t / 100.0);
@@ -1055,10 +1046,11 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                 "Max parallel tasks",
                 "Global concurrency cap across all brains",
                 |ui| {
-                    let mut n = c.f("max_parallel_total").unwrap_or(8.0);
-                    let r = ui.add(egui::DragValue::new(&mut n).range(1.0..=32.0));
-                    if r.drag_stopped() || r.lost_focus() {
-                        edits.push(Box::new(move |c| c["max_parallel_total"] = json!(n)));
+                    let saved = c.f("max_parallel_total").unwrap_or(8.0);
+                    if let Some(n) = drag_setting(ui, "set_max_parallel", saved, 1.0..=32.0, "") {
+                        edits.push(Box::new(move |c| {
+                            c["max_parallel_total"] = json!(n.round())
+                        }));
                     }
                 },
             );
@@ -1090,9 +1082,10 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                 "Approval timeout",
                 "Falls back to terminal prompt after this duration",
                 |ui| {
-                    let mut w = ap.f("wait_s").unwrap_or(20.0);
-                    let r = ui.add(egui::DragValue::new(&mut w).range(2.0..=600.0).suffix(" s"));
-                    if r.drag_stopped() || r.lost_focus() {
+                    let saved = ap.f("wait_s").unwrap_or(20.0);
+                    if let Some(w) =
+                        drag_setting(ui, "set_approvals_wait", saved, 2.0..=600.0, " s")
+                    {
                         edits.push(Box::new(move |c| {
                             ensure(c, "approvals");
                             c["approvals"]["wait_s"] = json!(w);
@@ -1122,14 +1115,9 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
             },
         );
         row(ui, "History retention", "", |ui| {
-            let mut d = c.f("history_days").unwrap_or(30.0);
-            let r = ui.add(
-                egui::DragValue::new(&mut d)
-                    .range(7.0..=365.0)
-                    .suffix(" days"),
-            );
-            if r.drag_stopped() || r.lost_focus() {
-                edits.push(Box::new(move |c| c["history_days"] = json!(d)));
+            let saved = c.f("history_days").unwrap_or(30.0);
+            if let Some(d) = drag_setting(ui, "set_history_days", saved, 7.0..=365.0, " days") {
+                edits.push(Box::new(move |c| c["history_days"] = json!(d.round())));
             }
         });
         row(
@@ -1151,22 +1139,56 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
             let listening = lan_info.b("listening", false);
             let enabled = lan_info.b("enabled", false);
             if listening {
-                ui.label(egui::RichText::new(format!(
-                    "Activo en red local ({}) · protegido con PIN · HTTP sin TLS (úsalo solo en redes de confianza)",
-                    lan_info.s("url")
-                )).font(body(11.5)).color(ATTN));
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Active on LAN ({}) · PIN protected · plain HTTP without TLS (trusted networks only)",
+                        lan_info.s("url")
+                    ))
+                    .font(body(11.5))
+                    .color(ATTN),
+                );
             } else if enabled {
-                ui.label(faint("Preferencia guardada, pero esta instancia escucha solo en 127.0.0.1. Inicia con --lan para abrirlo en tu red."));
+                ui.label(faint(
+                    "Preference saved, but this instance is bound to 127.0.0.1 only. Launch with --lan to expose on your network.",
+                ));
             } else {
-                ui.label(faint("Escuchando solo en este equipo (127.0.0.1)."));
+                ui.label(faint("Listening on localhost only (127.0.0.1)."));
+            }
+            let pin = lan_info.s("pin");
+            if (listening || enabled) && !pin.is_empty() {
+                let pin_vis_id = egui::Id::unique("lan_pin_visible");
+                let mut show_pin: bool = ui
+                    .ctx()
+                    .data(|d| d.get_temp::<bool>(pin_vis_id))
+                    .unwrap_or(false);
+                ui.horizontal(|ui| {
+                    ui.label(faint("LAN PIN:"));
+                    ui.label(
+                        egui::RichText::new(if show_pin {
+                            pin.as_str()
+                        } else {
+                            "••••••"
+                        })
+                        .font(mono(12.5))
+                        .color(INK),
+                    );
+                    if quiet(ui, if show_pin { "Hide PIN" } else { "Show PIN" }).clicked() {
+                        show_pin = !show_pin;
+                        ui.ctx().data_mut(|d| d.insert_temp(pin_vis_id, show_pin));
+                    }
+                    if quiet(ui, "Copy PIN").clicked() {
+                        ui.ctx().copy_text(pin.clone());
+                        app.say("LAN PIN copied", INFO);
+                    }
+                });
             }
         }
     });
 
     let mut save_json: Option<Value> = None;
-    set_section(ui, "Avanzado", "La configuración completa en JSON", |ui| {
+    set_section(ui, "Advanced", "Full configuration JSON", |ui| {
         if !app.ui.cfg_open {
-            if quiet(ui, "Editar JSON").clicked() {
+            if quiet(ui, "Edit JSON").clicked() {
                 let mut v = c.clone();
                 if v.get("lan").and_then(|l| l.get("pin")).is_some() {
                     v["lan"]["pin"] = json!("••••••");
@@ -1188,7 +1210,7 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
             ui.label(egui::RichText::new(&app.ui.cfg_err).color(ALARM));
         }
         ui.horizontal(|ui| {
-            if primary(ui, "Guardar").clicked() {
+            if primary(ui, "Save").clicked() {
                 match serde_json::from_str::<Value>(&app.ui.cfg_text) {
                     Ok(mut nc) => {
                         if nc
@@ -1205,10 +1227,10 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                         }
                         save_json = Some(nc);
                     }
-                    Err(e) => app.ui.cfg_err = format!("JSON inválido: {e}"),
+                    Err(e) => app.ui.cfg_err = format!("Invalid JSON: {e}"),
                 }
             }
-            if quiet(ui, "Cancelar").clicked() {
+            if quiet(ui, "Cancel").clicked() {
                 app.ui.cfg_open = false;
             }
         });
@@ -1228,7 +1250,7 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
     }
     for a in acts {
         app.act(a);
-        app.say("Guardado", RUN);
+        app.say("Saved", RUN);
     }
     if !edits.is_empty() {
         let mut nc = app.sup.cfg.get();
@@ -1236,17 +1258,51 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
             e(&mut nc);
         }
         let r = app.sup.act(&json!({"a": "config", "config": nc}));
-        app.say(if r == "ok" { "Guardado".to_string() } else { r }, RUN);
+        if r == "ok" {
+            app.say("Saved", RUN);
+        } else {
+            app.say(r, ALARM);
+        }
     }
     if let Some(nc) = save_json {
         let r = app.sup.act(&json!({"a": "config", "config": nc}));
         if r == "ok" {
             app.ui.cfg_open = false;
-            app.say("Configuración guardada", RUN);
+            app.say("Configuration saved", RUN);
         } else {
             app.ui.cfg_err = r;
         }
     }
+}
+
+/// Stateful `DragValue` helper that buffers in-flight drag edits in egui temp memory
+/// and emits `Some(final_value)` only when the user finishes dragging or unfocuses.
+fn drag_setting(
+    ui: &mut egui::Ui,
+    salt: &str,
+    saved: f64,
+    range: std::ops::RangeInclusive<f64>,
+    suffix: &str,
+) -> Option<f64> {
+    let id = egui::Id::unique(salt);
+    let mut val = ui.ctx().data(|d| d.get_temp::<f64>(id)).unwrap_or(saved);
+    let mut dv = egui::DragValue::new(&mut val).range(range);
+    if !suffix.is_empty() {
+        dv = dv.suffix(suffix);
+    }
+    let r = ui.add(dv);
+    if r.dragged() || r.has_focus() || r.changed() {
+        ui.ctx().data_mut(|d| d.insert_temp(id, val));
+    }
+    if r.drag_stopped() || r.lost_focus() {
+        ui.ctx().data_mut(|d| d.remove::<f64>(id));
+        if (val - saved).abs() > f64::EPSILON {
+            return Some(val);
+        }
+    } else if !r.dragged() && !r.has_focus() {
+        ui.ctx().data_mut(|d| d.remove::<f64>(id));
+    }
+    None
 }
 
 fn set_section(ui: &mut egui::Ui, title: &str, sub: &str, body: impl FnOnce(&mut egui::Ui)) {

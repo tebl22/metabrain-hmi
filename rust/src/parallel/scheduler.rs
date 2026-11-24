@@ -192,7 +192,14 @@ pub fn build_branch_prompt(
         if api_brain {
             let mut remaining = 20_000usize;
             for f in files {
-                if is_image_path(f) || remaining == 0 {
+                if is_image_path(f) || remaining == 0 || f.starts_with(r"\\") || f.starts_with("//")
+                {
+                    continue;
+                }
+                if fs::metadata(f)
+                    .map(|m| m.len() > crate::docs::MAX_INLINE_FILE_BYTES)
+                    .unwrap_or(true)
+                {
                     continue;
                 }
                 if let Ok(t) = fs::read_to_string(f) {

@@ -82,6 +82,9 @@ pub fn get(id: &str) -> Option<Value> {
 /// Answer a pending request. Returns false when it is no longer pending.
 pub fn decide(id: &str, allow: bool, by: &str) -> bool {
     let Some(p) = path(id) else { return false };
+    let Some(_flock) = crate::util::FileLock::acquire(&p, 2000) else {
+        return false;
+    };
     let Some(mut rec) = read_json(&p) else {
         return false;
     };
@@ -97,6 +100,9 @@ pub fn decide(id: &str, allow: bool, by: &str) -> bool {
 /// The request was answered elsewhere (terminal) or timed out.
 pub fn expire(id: &str) {
     if let Some(p) = path(id) {
+        let Some(_flock) = crate::util::FileLock::acquire(&p, 1500) else {
+            return;
+        };
         if let Some(mut rec) = read_json(&p) {
             if rec.s("status") == "pending" {
                 rec["status"] = json!("terminal");

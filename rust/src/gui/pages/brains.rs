@@ -800,14 +800,25 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
                         #[cfg(windows)]
                         let _ = std::process::Command::new("cmd")
                             .args([
+                                "/d",
                                 "/c",
                                 "start",
                                 "Instalar Codex",
                                 "cmd",
+                                "/d",
                                 "/k",
                                 "npm install -g @openai/codex && echo Listo. Cierra esta ventana.",
                             ])
                             .spawn();
+                        #[cfg(not(windows))]
+                        {
+                            ui.ctx()
+                                .copy_text("npm install -g @openai/codex".to_string());
+                            app.say(
+                                "Copied `npm install -g @openai/codex` — run it in your terminal.",
+                                INFO,
+                            );
+                        }
                     }
                 });
                 ui.add_space(8.0);
@@ -1077,9 +1088,9 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
                 "Carpeta de la cuenta",
                 &mut w.config_dir,
                 if w.choice == Choice::Claude {
-                    "~/.claude-gmail"
+                    "~/.claude-work"
                 } else {
-                    "~/.codex-trabajo"
+                    "~/.codex-work"
                 },
             );
         }

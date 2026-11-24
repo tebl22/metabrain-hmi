@@ -502,6 +502,7 @@ impl Router {
         let lv = level.to_string();
         let cand = candidate.trim().to_string();
         let updated = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let _flock = crate::util::FileLock::acquire(&self.path, 2000);
         self.refresh();
         let snapshot = {
             let mut d = match self.data.lock() {

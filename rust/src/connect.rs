@@ -74,7 +74,7 @@ pub fn claude_email(dir: &std::path::Path) -> Option<String> {
     )
 }
 
-fn is_safe_cmd_path(path: &std::path::Path) -> bool {
+pub(crate) fn is_safe_cmd_path(path: &std::path::Path) -> bool {
     let s = path.to_string_lossy();
     !s.is_empty()
         && !s.chars().any(|c| {
@@ -101,13 +101,22 @@ fn build_claude_login_cmd(dir: &std::path::Path) -> Command {
 
 #[cfg(windows)]
 fn build_codex_login_cmd(home: &std::path::Path, bin: &std::path::Path) -> Result<Command, String> {
+    use std::os::windows::process::CommandExt;
     if !is_safe_cmd_path(bin) {
         return Err("La ruta del ejecutable de Codex contiene caracteres no permitidos.".into());
     }
     let mut cmd = Command::new("cmd");
     cmd.env("CODEX_HOME", home)
-        .args(["/c", "start", "Iniciar sesión en ChatGPT", "cmd", "/k"])
-        .arg(format!("\"{}\" login", bin.display()));
+        .args([
+            "/d",
+            "/c",
+            "start",
+            "Iniciar sesión en ChatGPT",
+            "cmd",
+            "/d",
+            "/k",
+        ])
+        .raw_arg(format!("\"\"{}\" login\"", bin.display()));
     Ok(cmd)
 }
 
@@ -180,10 +189,24 @@ pub fn save_key(name: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn url_host(base: &str) -> Option<&str> {
+    let rest = base
+        .strip_prefix("https://")
+        .or_else(|| base.strip_prefix("http://"))?;
+    let auth = rest.split(['/', '?', '#']).next()?;
+    if auth.is_empty() || auth.contains('@') {
+        return None;
+    }
+    Some(auth.split(':').next().unwrap_or(auth))
+}
+
 /// Check a key against the provider before saving it. Returns a short, human result.
 pub fn test_key(kind: &str, base_url: &str, key: &str) -> Result<String, String> {
     let key = key.trim();
     let base = base_url.trim().trim_end_matches('/');
+    let Some(host) = url_host(base) else {
+        return Err("Invalid provider URL (must start with http:// or https://).".into());
+    };
     let r = if kind == "anthropic" {
         crate::util::http_json(
             &format!("{base}/v1/models"),
@@ -203,11 +226,12 @@ pub fn test_key(kind: &str, base_url: &str, key: &str) -> Result<String, String>
         Ok(v) => {
             let n = v.arr("data").len();
             let mut msg = if n > 0 {
-                format!("Clave válida · {n} modelos disponibles")
+                format!("Valid key · {n} models available")
             } else {
-                "Clave válida".to_string()
+                "Valid key".to_string()
             };
-            if base.contains("deepseek.com") {
+            let host_low = host.to_ascii_lowercase();
+            if host_low == "deepseek.com" || host_low.ends_with(".deepseek.com") {
                 if let Ok(b) = crate::util::http_json(
                     &format!("{base}/user/balance"),
                     &[("Authorization", &format!("Bearer {key}"))],
@@ -215,7 +239,7 @@ pub fn test_key(kind: &str, base_url: &str, key: &str) -> Result<String, String>
                     15,
                 ) {
                     if let Some(i) = b.arr("balance_infos").first() {
-                        msg += &format!(" · saldo {} {}", i.s("total_balance"), i.s("currency"));
+                        msg += &format!(" · balance {} {}", i.s("total_balance"), i.s("currency"));
                     }
                 }
             }
@@ -447,7 +471,7 @@ mod tests {
     #[test]
     fn safe_cmd_path_blocks_shell_metacharacters() {
         assert!(is_safe_cmd_path(Path::new(
-            r"C:\Users\esteb\AppData\Roaming\npm\codex.cmd"
+            r"C:\Users\alice\AppData\Roaming\npm\codex.cmd"
         )));
         assert!(is_safe_cmd_path(Path::new(
             r"C:\Program Files\nodejs\codex.exe"
@@ -475,7 +499,7 @@ mod tests {
             .get_envs()
             .any(|(k, v)| k == "CLAUDE_CONFIG_DIR" && v == Some(evil_dir.as_os_str())));
 
-        let safe_bin = Path::new(r"C:\Users\esteb\AppData\Roaming\npm\codex.cmd");
+        let safe_bin = Path::new(r"C:\Users\alice\AppData\Roaming\npm\codex.cmd");
         let codex = build_codex_login_cmd(evil_dir, safe_bin).expect("safe bin");
         let cargs: Vec<String> = codex
             .get_args()

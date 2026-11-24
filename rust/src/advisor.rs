@@ -60,14 +60,21 @@ impl Advisor {
     }
 
     // ---------------------------------------------------------------- metrics
-    fn metrics(&self, sup: &Supervisor, b: &Brain, now: f64) -> Value {
+    fn metrics(
+        &self,
+        sup: &Supervisor,
+        b: &Brain,
+        usages: &[crate::store::Usage],
+        summ: Option<&Value>,
+        now: f64,
+    ) -> Value {
         let ids = [b.id.clone(), format!("{}:file", b.id)];
         let mut recent_tok: i64 = 0;
         let mut hour_tok: i64 = 0;
         let mut read: i64 = 0;
         let mut fresh: i64 = 0;
         let mut usd_h = 0.0;
-        for u in sup.ledger.all() {
+        for u in usages {
             if u.ts < now - 3600.0 || !ids.contains(&u.brain) {
                 continue;
             }
@@ -75,9 +82,10 @@ impl Advisor {
             hour_tok += t;
             usd_h += u.usd;
             read += u.cache_read;
-            // For API/proxy records (`openai`, etc.) `u.inp` already includes `cache_read`;
-            // subtract it so 100% cache hit reports 100% instead of capping at 50%.
-            let uncached_inp = if b.kind == "claude_code" {
+            // For Claude Code & OpenCode, `u.inp` is already uncached input.
+            // For proxy / task-ledger records (`openai`, `codex`, `antigravity`, `gemini_cli`),
+            // `u.inp` includes `cache_read`; subtract it so 100% cache hit reports 100%.
+            let uncached_inp = if matches!(b.kind.as_str(), "claude_code" | "opencode") {
                 u.inp
             } else {
                 (u.inp - u.cache_read).max(0)
@@ -94,7 +102,7 @@ impl Advisor {
             None
         };
         let fc = guard(&sup.failover.forecasts).get(&b.id).cloned();
-        let (ratio, _reasons) = sup.budget_ratio(b, None);
+        let (ratio, _reasons) = sup.budget_ratio(b, summ);
         let h = guard(&self.learned)
             .get(b.id.as_str())
             .cloned()
@@ -165,6 +173,17 @@ impl Advisor {
 
     // ---------------------------------------------------------------- per tick
     pub fn tick(&self, sup: &Supervisor, snap_brains: &[Value], now: f64) {
+        let summ = sup.ledger.summary(Some(now));
+        self.tick_with(sup, snap_brains, Some(&summ), now);
+    }
+
+    pub fn tick_with(
+        &self,
+        sup: &Supervisor,
+        snap_brains: &[Value],
+        summ: Option<&Value>,
+        now: f64,
+    ) {
         let mut snaps: HashMap<String, Value> = HashMap::new();
         for x in snap_brains {
             if let Some(id) = x.os("id") {
@@ -175,6 +194,12 @@ impl Advisor {
             Ok(g) => g.clone(),
             Err(e) => e.into_inner().clone(),
         };
+        let has_active = brains.iter().any(|b| self.mode(b) != "off");
+        let usages = if has_active {
+            sup.ledger.all()
+        } else {
+            Vec::new()
+        };
         for b in brains {
             let mode = self.mode(&b);
             if mode == "off" {
@@ -184,8 +209,8 @@ impl Advisor {
                 );
                 continue;
             }
-            let m = self.metrics(sup, &b, now);
-            let eff = sup.effective(&b, None);
+            let m = self.metrics(sup, &b, &usages, summ, now);
+            let eff = sup.effective(&b, summ);
             let subs = snaps.get(&b.id).and_then(|x| x.get("subagents")).cloned();
             let recs = self.recommend(&b, &m, &eff, subs.as_ref());
             self.learn_update(&b.id, m.f("tpm").unwrap_or(0.0), m.f("cache_pct"));

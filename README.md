@@ -60,7 +60,9 @@ Run directly:
 Optional flags:
 - `--lan` — bind the read-only PIN-protected mobile monitor to `0.0.0.0` (HTTP without TLS; use only on trusted local networks)
 - `--port <N>` — override the listening port (default `8790`)
-- `--no-tray` — run headless without the desktop window/tray
+- `--no-tray` — run without the system tray icon
+- `--no-window` / `--web` — run headless (server only, without opening the native desktop window)
+- `--no-browser` — do not automatically open a browser tab on startup
 
 ### Install on Windows
 

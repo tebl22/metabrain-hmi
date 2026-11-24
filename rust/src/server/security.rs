@@ -160,11 +160,19 @@ pub(super) fn redact_remote_secrets(v: &mut Value) {
         Value::Object(map) => {
             for (k, val) in map.iter_mut() {
                 let kl = k.to_ascii_lowercase();
-                if matches!(
-                    kl.as_str(),
-                    "api_key" | "password" | "secret" | "token" | "pin"
-                ) && val.is_string()
-                {
+                let is_env_ref = kl.ends_with("_env");
+                let is_sensitive_key = !is_env_ref
+                    && (kl == "pin"
+                        || kl.contains("secret")
+                        || kl.contains("password")
+                        || kl.contains("passwd")
+                        || kl.contains("token")
+                        || kl.contains("api_key")
+                        || kl.contains("apikey")
+                        || kl.contains("authorization")
+                        || kl.contains("bearer")
+                        || kl.contains("cookie"));
+                if is_sensitive_key && val.is_string() {
                     *val = json!("******");
                 } else {
                     redact_remote_secrets(val);
@@ -233,12 +241,18 @@ pub(super) fn safe_name(name: &str) -> String {
     }
 }
 
-/// Resolve a safe upload directory. Rejects path traversal (`..`), non-directories,
-/// and OS system directories, falling back to MetaBrain's own `adjuntos` folder.
+/// Resolve a safe upload directory. Rejects path traversal (`..`), UNC/network paths,
+/// env-var syntax, non-directories, and OS system directories, falling back to MetaBrain's own `adjuntos` folder.
 pub(super) fn safe_upload_dir(cwd: &str) -> PathBuf {
     let fallback = crate::util::data_dir().join("adjuntos");
     let trimmed = cwd.trim();
-    if trimmed.is_empty() || trimmed.contains('\0') {
+    if trimmed.is_empty()
+        || trimmed.starts_with(r"\\")
+        || trimmed.starts_with("//")
+        || trimmed.contains('%')
+        || trimmed.contains('$')
+        || trimmed.bytes().any(|b| b < 0x20 || b == 0x7f)
+    {
         return fallback;
     }
     let raw = std::path::Path::new(trimmed);
@@ -254,10 +268,10 @@ pub(super) fn safe_upload_dir(cwd: &str) -> PathBuf {
     if !canon.is_dir() {
         return fallback;
     }
-    let norm_canon = crate::util::norm(&canon);
     // Reject OS system roots on Windows and Unix so `/api/upload` cannot target system folders.
     #[cfg(windows)]
     {
+        let norm_canon = crate::util::norm(&canon);
         for env_key in [
             "SystemRoot",
             "WINDIR",
@@ -277,10 +291,11 @@ pub(super) fn safe_upload_dir(cwd: &str) -> PathBuf {
     }
     #[cfg(not(windows))]
     {
+        let unix_canon = canon.to_string_lossy();
         for blocked in [
             "/etc", "/usr", "/bin", "/sbin", "/lib", "/boot", "/proc", "/sys", "/dev",
         ] {
-            if norm_canon == blocked || norm_canon.starts_with(&format!("{blocked}/")) {
+            if unix_canon == blocked || unix_canon.starts_with(&format!("{blocked}/")) {
                 return fallback;
             }
         }

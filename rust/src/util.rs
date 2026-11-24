@@ -312,6 +312,7 @@ fn request_json(
 ) -> Result<Value, String> {
     let agent = ureq::AgentBuilder::new()
         .timeout(std::time::Duration::from_secs(timeout_s))
+        .redirects(0)
         .build();
     let mut req = if body.is_some() {
         agent.post(url)
@@ -476,8 +477,9 @@ pub struct ProcessJob {
 impl Drop for ProcessJob {
     fn drop(&mut self) {
         if self.pid > 0 {
+            let pgid = format!("-{}", self.pid);
             let _ = std::process::Command::new("kill")
-                .args(["-TERM", &format!("-{}", self.pid)])
+                .args(["-KILL", &pgid])
                 .status();
         }
     }
@@ -518,9 +520,10 @@ pub fn attach_kill_job(child: &std::process::Child) -> std::io::Result<ProcessJo
     }
 }
 
-/// Cross-process lockfile using atomic `create_new` with stale-lock recovery.
+/// Cross-process OS advisory/mandatory file lock (`LockFileEx` on Windows, `flock` on Unix).
+/// Automatically released by the OS kernel on drop or process crash with no stale-lock race.
 pub struct FileLock {
-    path: PathBuf,
+    _file: fs::File,
 }
 
 impl FileLock {
@@ -535,41 +538,27 @@ impl FileLock {
                 let _ = fs::create_dir_all(parent);
             }
         }
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+            .ok()?;
         let deadline =
             std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms.max(50));
         loop {
-            match fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&lock_path)
-            {
-                Ok(mut f) => {
-                    let _ = write!(f, "{}", std::process::id());
-                    return Some(FileLock { path: lock_path });
-                }
-                Err(_) => {
-                    // Break stale locks older than 30 s (crashed process).
-                    if let Ok(md) = fs::metadata(&lock_path) {
-                        if let Ok(mod_t) = md.modified() {
-                            if mod_t.elapsed().map(|d| d.as_secs() >= 30).unwrap_or(false) {
-                                let _ = fs::remove_file(&lock_path);
-                                continue;
-                            }
-                        }
-                    }
+            match file.try_lock() {
+                Ok(()) => return Some(FileLock { _file: file }),
+                Err(fs::TryLockError::WouldBlock) => {
                     if std::time::Instant::now() >= deadline {
                         return None;
                     }
                     std::thread::sleep(std::time::Duration::from_millis(12));
                 }
+                Err(fs::TryLockError::Error(_)) => return None,
             }
         }
-    }
-}
-
-impl Drop for FileLock {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
     }
 }
 
@@ -581,6 +570,45 @@ pub fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
     LOCK.get_or_init(|| Mutex::new(()))
         .lock()
         .unwrap_or_else(|e| e.into_inner())
+}
+
+/// RAII test guard that isolates `METABRAIN_HOME` to a fresh temporary directory and restores it on drop.
+#[cfg(test)]
+pub struct TestHomeGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    prev: Option<std::ffi::OsString>,
+    pub dir: PathBuf,
+}
+
+#[cfg(test)]
+impl TestHomeGuard {
+    pub fn new(tag: &str) -> Self {
+        static TEST_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let lock = test_env_lock();
+        let prev = std::env::var_os("METABRAIN_HOME");
+        let seq = TEST_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("metabrain_test_{tag}_{}_{seq}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::create_dir_all(&dir);
+        std::env::set_var("METABRAIN_HOME", &dir);
+        Self {
+            _lock: lock,
+            prev,
+            dir,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestHomeGuard {
+    fn drop(&mut self) {
+        match &self.prev {
+            Some(v) => std::env::set_var("METABRAIN_HOME", v),
+            None => std::env::remove_var("METABRAIN_HOME"),
+        }
+        let _ = fs::remove_dir_all(&self.dir);
+    }
 }
 
 #[cfg(test)]

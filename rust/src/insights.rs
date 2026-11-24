@@ -46,13 +46,17 @@ fn fmt_when(ts: f64) -> String {
     }
 }
 
-/// Remove `<command-...>` / `<system-reminder...>` fragments, trim and cut to 300 chars.
+/// Remove `<command-...>...</command-...>` / `<system-reminder>...</system-reminder>` blocks, trim and cut to 300 chars.
 fn clean_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut i = 0usize;
     while i < s.len() {
         let rest = &s[i..];
-        if rest.starts_with("<command-") || rest.starts_with("<system-reminder") {
+        if rest.starts_with("<system-reminder") {
+            if let Some(end) = rest.find("</system-reminder>") {
+                i += end + "</system-reminder>".len();
+                continue;
+            }
             match rest.find('>') {
                 Some(off) => {
                     i += off + 1;
@@ -60,6 +64,19 @@ fn clean_text(s: &str) -> String {
                 }
                 None => break,
             }
+        }
+        if rest.starts_with("<command-") {
+            if let Some(gt) = rest.find('>') {
+                let tag_name = rest[1..gt].split_whitespace().next().unwrap_or("");
+                let close = format!("</{tag_name}>");
+                if let Some(end) = rest.find(&close) {
+                    i += end + close.len();
+                    continue;
+                }
+                i += gt + 1;
+                continue;
+            }
+            break;
         }
         match rest.chars().next() {
             Some(c) => {
@@ -125,21 +142,30 @@ fn usage_tokens(u: &Value) -> i64 {
 
 /// Parse one transcript file; questions keep order, tokens attached to the current question.
 fn scan_file(path: &Path, fallback_topic: &str, mtime: f64) -> Vec<Q> {
-    let raw = match fs::read(path) {
-        Ok(r) => r,
-        Err(_) => return Vec::new(),
+    let Ok(file) = fs::File::open(path) else {
+        return Vec::new();
     };
-    let txt = String::from_utf8_lossy(&raw);
+    let mut reader = std::io::BufReader::new(file);
+    let mut raw_line = Vec::new();
     let mut qs: Vec<Q> = Vec::new();
     let mut cur: Option<usize> = None;
     let mut topic: Option<String> = None;
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut seen: HashMap<String, (Option<usize>, i64)> = HashMap::new();
     let mut n = 0usize;
-    for line in txt.split('\n') {
+    loop {
+        raw_line.clear();
+        let bytes = match std::io::BufRead::read_until(&mut reader, b'\n', &mut raw_line) {
+            Ok(b) => b,
+            Err(_) => break,
+        };
+        if bytes == 0 {
+            break;
+        }
         n += 1;
         if n > MAX_LINES {
             break;
         }
+        let line = String::from_utf8_lossy(&raw_line);
         let lt = line.trim();
         if lt.is_empty() || !lt.starts_with('{') {
             continue;
@@ -159,6 +185,9 @@ fn scan_file(path: &Path, fallback_topic: &str, mtime: f64) -> Vec<Q> {
         }
         match rec.s("type").as_str() {
             "user" => {
+                if crate::util::truthy(rec.get("isMeta")) {
+                    continue;
+                }
                 let text = match user_question(&rec) {
                     Some(t) => t,
                     None => continue,
@@ -190,13 +219,24 @@ fn scan_file(path: &Path, fallback_topic: &str, mtime: f64) -> Vec<Q> {
                     _ => continue,
                 };
                 let id = msg.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                // Count each message.id only once per file.
-                if !id.is_empty() && !seen.insert(id.to_string()) {
-                    continue;
-                }
-                let add = usage_tokens(usage);
-                if add != 0 {
-                    if let Some(ix) = cur {
+                let total_u = usage_tokens(usage);
+                // Streaming emits multiple chunks for one message.id: apply positive deltas.
+                let (target_ix, add) = if !id.is_empty() {
+                    if let Some((prev_ix, prev_tok)) = seen.get_mut(id) {
+                        let delta = (total_u - *prev_tok).max(0);
+                        if delta > 0 {
+                            *prev_tok = total_u;
+                        }
+                        (*prev_ix, delta)
+                    } else {
+                        seen.insert(id.to_string(), (cur, total_u));
+                        (cur, total_u)
+                    }
+                } else {
+                    (cur, total_u)
+                };
+                if add > 0 {
+                    if let Some(ix) = target_ix {
                         if let Some(q) = qs.get_mut(ix) {
                             q.tokens += add;
                         }
@@ -230,15 +270,19 @@ fn jsonl_in(dir: &Path, out: &mut Vec<PathBuf>) {
 
 /// Top questions by tokens consumed, grouped by topic and account.
 pub fn top_questions(brains: &[Value], days: i64, limit: usize) -> Value {
+    let mut seen_dirs: HashSet<String> = HashSet::new();
     let claudes: Vec<(String, String)> = brains
         .iter()
-        .filter(|b| b.s("kind") == "claude_code")
-        .map(|b| {
-            (
-                b.s("name"),
-                b.os("config_dir")
-                    .unwrap_or_else(|| "~/.claude".to_string()),
-            )
+        .filter(|b| b.s("kind") == "claude_code" && b.b("enabled", true))
+        .filter_map(|b| {
+            let dir = b
+                .os("config_dir")
+                .unwrap_or_else(|| "~/.claude".to_string());
+            let norm_dir = crate::util::norm(Path::new(&expand_s(&dir)));
+            if !seen_dirs.insert(norm_dir) {
+                return None;
+            }
+            Some((b.s("name"), dir))
         })
         .collect();
 
@@ -844,6 +888,7 @@ pub fn notify_with(title: &str, body: &str, view: &str) {
     #[cfg(not(windows))]
     {
         let spawned = std::process::Command::new("notify-send")
+            .arg("--")
             .arg(title)
             .arg(body)
             .spawn()

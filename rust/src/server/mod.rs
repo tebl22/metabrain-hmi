@@ -123,14 +123,21 @@ fn handle_http(
             send_json(req, 401, &json!({"error": "login required"}), &[]);
             return;
         }
-        if !local && method != "GET" {
-            send_json(
-                req,
-                403,
-                &json!({"error": "El panel de red local es de solo lectura."}),
-                &[],
-            );
-            return;
+        if !local {
+            let lan_allowed = method == "GET"
+                && matches!(
+                    path.as_str(),
+                    "/api/state" | "/api/tasks" | "/api/lan" | "/api/qr.svg"
+                );
+            if !lan_allowed {
+                send_json(
+                    req,
+                    403,
+                    &json!({"error": "The LAN monitor is strictly read-only."}),
+                    &[],
+                );
+                return;
+            }
         }
         api::dispatch(sup, req, &method, &path, local, lan_listening);
         return;

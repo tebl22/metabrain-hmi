@@ -91,9 +91,16 @@ impl Brain {
         let cfg = self.cfg();
         // Consumer-account CLIs (Codex / Gemini CLI / Antigravity): check install, sign-in & quota.
         if let Some(agent) = crate::cli_agents::Agent::from_kind(&self.kind) {
+            let mut env_pairs: Vec<(String, String)> = Vec::new();
+            if agent == crate::cli_agents::Agent::Codex {
+                let home = crate::cli_agents::codex_home(&cfg);
+                if !home.as_os_str().is_empty() {
+                    env_pairs.push(("CODEX_HOME".into(), home.to_string_lossy().into_owned()));
+                }
+            }
             let w = if crate::cli_agents::find_bin(agent).is_none() {
                 format!("{} no está instalado", agent.display_name())
-            } else if !crate::cli_agents::logged_in(agent) {
+            } else if !crate::cli_agents::logged_in_with_env(agent, &env_pairs) {
                 if agent == crate::cli_agents::Agent::Antigravity {
                     "Sin sesión: inicia sesión desde Cerebros".to_string()
                 } else {

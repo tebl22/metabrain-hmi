@@ -162,35 +162,6 @@ pub struct Outcome {
     pub secs: u64,
 }
 
-#[cfg(windows)]
-fn verification_job(
-    child: &std::process::Child,
-) -> std::io::Result<std::os::windows::io::OwnedHandle> {
-    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
-    use windows_sys::Win32::System::JobObjects::*;
-    // Closing this handle ends descendants which still own output pipe handles.
-    unsafe {
-        let raw = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-        if raw.is_null() {
-            return Err(std::io::Error::last_os_error());
-        }
-        let job = OwnedHandle::from_raw_handle(raw);
-        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if SetInformationJobObject(
-            raw,
-            JobObjectExtendedLimitInformation,
-            (&info as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-            std::mem::size_of_val(&info) as u32,
-        ) == 0
-            || AssignProcessToJobObject(raw, child.as_raw_handle()) == 0
-        {
-            return Err(std::io::Error::last_os_error());
-        }
-        Ok(job)
-    }
-}
-
 fn read_tail(mut input: impl Read) -> String {
     let mut last = Vec::new();
     let mut buf = [0u8; 8192];
@@ -226,8 +197,7 @@ pub fn run_until(c: &Check, timeout_s: u64, cancelled: impl Fn() -> bool) -> Opt
     hidden(&mut cmd);
     let t0 = Instant::now();
     let mut child = cmd.spawn().ok()?;
-    #[cfg(windows)]
-    let job = match verification_job(&child) {
+    let job = match crate::util::attach_kill_job(&child) {
         Ok(job) => Some(job),
         Err(_) if child.try_wait().ok().flatten().is_some() => None,
         Err(_) => {
@@ -254,7 +224,6 @@ pub fn run_until(c: &Check, timeout_s: u64, cancelled: impl Fn() -> bool) -> Opt
             }
         }
     };
-    #[cfg(windows)]
     drop(job);
     if cancelled() {
         return None;

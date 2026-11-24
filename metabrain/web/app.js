@@ -6,6 +6,15 @@
 
 const $ = (id) => document.getElementById(id);
 let timer = null;
+let authed = false;
+let inFlight = false;
+
+function stopPolling() {
+  if (timer) {
+    clearInterval(timer);
+    timer = null;
+  }
+}
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -50,6 +59,7 @@ function renderState(snap, tasks) {
   const overall = String(snap.overall || "OK").toUpperCase();
   const dot = $("overall-dot");
   dot.className = "dot" + (overall === "ALARM" ? " alarm" : overall === "WARNING" ? " warn" : "");
+  dot.setAttribute("aria-label", "System status: " + overall);
   $("version-badge").textContent = "v" + String(snap.version || "1.4.0");
   $("mode-pill").textContent = "Mode: " + String(snap.mode || "normal").toUpperCase();
 
@@ -99,7 +109,8 @@ function renderState(snap, tasks) {
       const subParts = [];
       if (model) subParts.push(model);
       if (pct !== null) subParts.push("Quota " + Math.round(pct) + "%");
-      if (b.pilot && b.pilot !== "off") subParts.push("Pilot: " + b.pilot);
+      const pilotMode = typeof b.pilot === "string" ? b.pilot : (b.pilot && b.pilot.mode);
+      if (pilotMode && pilotMode !== "off") subParts.push("Pilot: " + pilotMode);
       card.appendChild(el("div", "row-sub", subParts.join(" · ") || "Ready"));
 
       if (pct !== null) {
@@ -181,28 +192,34 @@ function renderState(snap, tasks) {
 }
 
 async function pollOnce() {
-  if (document.visibilityState === "hidden") return;
+  if (document.visibilityState === "hidden" || inFlight) return;
+  inFlight = true;
   try {
     const [stRes, tkRes] = await Promise.all([
       fetch("/api/state", { cache: "no-store" }),
       fetch("/api/tasks", { cache: "no-store" }),
     ]);
     if (stRes.status === 401 || tkRes.status === 401) {
+      authed = false;
+      stopPolling();
       showLogin("");
       return;
     }
     if (!stRes.ok) return;
     const snap = await stRes.json();
     const tasks = tkRes.ok ? await tkRes.json() : [];
+    authed = true;
     showDash();
     renderState(snap, tasks);
   } catch {
     $("updated-at").textContent = "Reconnecting…";
+  } finally {
+    inFlight = false;
   }
 }
 
 function startPolling() {
-  if (timer) clearInterval(timer);
+  stopPolling();
   pollOnce();
   timer = setInterval(pollOnce, 4000);
 }
@@ -220,18 +237,23 @@ $("login-form").addEventListener("submit", async (e) => {
     const body = await res.json().catch(() => ({}));
     if (res.ok && body.ok) {
       $("pin-input").value = "";
+      authed = true;
       showDash();
       startPolling();
     } else {
+      authed = false;
+      stopPolling();
       showLogin(body.error || "Invalid PIN");
     }
   } catch {
+    authed = false;
+    stopPolling();
     showLogin("Connection failed");
   }
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") pollOnce();
+  if (document.visibilityState === "visible" && authed) pollOnce();
 });
 
 startPolling();

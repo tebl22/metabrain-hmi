@@ -11,35 +11,43 @@ use crate::router::OPUS_COST;
 use crate::util::{expand_s, J};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+fn null_or_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    Ok(Option::<String>::deserialize(d)?.unwrap_or_default())
+}
+
+fn null_or_f64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    Ok(Option::<f64>::deserialize(d)?.unwrap_or(0.0))
+}
+
 /// Typed subset of a saved task metadata file (`tasks/<id>.json`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TaskRecord {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_or_string")]
     pub id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_or_string")]
     pub brain: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_or_string")]
     pub brain_name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_or_string")]
     pub kind: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_or_string")]
     pub model: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_or_string")]
     pub effort: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_or_string")]
     pub status: String,
     #[serde(default, deserialize_with = "token_count")]
     pub tokens: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_or_f64")]
     pub created: f64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_or_f64")]
     pub updated: f64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_or_string")]
     pub route_cand: String,
 }
 
@@ -104,10 +112,9 @@ pub fn model_effort_weight(
     let e = e_raw.to_lowercase();
     let k = kind.trim().to_lowercase();
 
-    let (base_cost, tier) = if m.contains("flash")
-        || m.contains("mini")
-        || m.contains("lite")
-        || m.contains("nano")
+    let (base_cost, tier) = if k == "ollama" {
+        (0.0, "local")
+    } else if m.contains("flash") || m.contains("mini") || m.contains("lite") || m.contains("nano")
     {
         (1.0, "ligero")
     } else if m.contains("deepseek") || (k == "openai" && m.is_empty()) {
@@ -284,7 +291,7 @@ pub fn read_session(path: &Path, account: &str) -> Option<Session> {
         account: account.to_string(),
         ..Default::default()
     };
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut seen: HashMap<String, u64> = HashMap::new();
     let mut days: BTreeMap<String, (u64, u64)> = BTreeMap::new();
     let mut first_user = true;
     for line in BufReader::new(f)
@@ -327,15 +334,27 @@ pub fn read_session(path: &Path, account: &str) -> Option<Session> {
             "assistant" => {
                 let m = v.get("message").cloned().unwrap_or(Value::Null);
                 let Some(u) = m.get("usage") else { continue };
-                let mid = m.s("id");
-                if !mid.is_empty() && !seen.insert(mid) {
-                    continue;
-                }
                 let g = |k: &str| u.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
                 let tok = g("input_tokens")
                     + g("output_tokens")
                     + g("cache_creation_input_tokens")
                     + g("cache_read_input_tokens");
+                let mid = m.s("id");
+                if !mid.is_empty() {
+                    if let Some(prev) = seen.get_mut(&mid) {
+                        if tok > *prev {
+                            let delta = tok - *prev;
+                            *prev = tok;
+                            s.tokens += delta;
+                            if let Some(t) = ts {
+                                let e = days.entry(day_of(t)).or_insert((0, 0));
+                                e.1 += delta;
+                            }
+                        }
+                        continue;
+                    }
+                    seen.insert(mid, tok);
+                }
                 s.turns += 1;
                 s.tokens += tok;
                 if let Some(t) = ts {

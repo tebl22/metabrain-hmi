@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 const MAX_PDF_BYTES: usize = 50 * 1024 * 1024;
 const MAX_STREAM_INFLATED: u64 = 8 * 1024 * 1024;
 const MAX_MD_CHARS: usize = 400_000;
-const MAX_INLINE_FILE_BYTES: u64 = 2 * 1024 * 1024;
+pub(crate) const MAX_INLINE_FILE_BYTES: u64 = 2 * 1024 * 1024;
 
 fn cache_dir_for(pdf: &Path) -> Result<PathBuf, String> {
     let parent = pdf
@@ -507,9 +507,15 @@ pub fn extract_pdf_text(bytes: &[u8]) -> Result<String, String> {
         return Err("File is not a valid PDF.".into());
     }
 
+    const MAX_TOTAL_INFLATED: usize = 32 * 1024 * 1024;
+    const MAX_PDF_STREAMS: usize = 512;
     let mut streams: Vec<Vec<u8>> = Vec::new();
+    let mut total_inflated: usize = 0;
     let mut pos = 0usize;
     while let Some(s_pos) = find_bytes(bytes, b"stream", pos) {
+        if streams.len() >= MAX_PDF_STREAMS || total_inflated >= MAX_TOTAL_INFLATED {
+            break;
+        }
         // Ensure "stream" is a standalone keyword, not "endstream".
         let prev_ok = s_pos == 0 || !bytes[s_pos - 1].is_ascii_alphabetic();
         let after_kw = s_pos + 6;
@@ -542,16 +548,22 @@ pub fn extract_pdf_text(bytes: &[u8]) -> Result<String, String> {
         if !is_image_xobj && data_end > data_start {
             let slice = &bytes[data_start..data_end];
             let flate = header.contains("/FlateDecode");
-            if flate {
-                if let Some(inflated) = inflate_stream(slice) {
-                    streams.push(inflated);
-                }
+            let maybe = if flate {
+                inflate_stream(slice)
             } else if slice.windows(2).any(|w| w == b"BT")
                 || slice.windows(11).any(|w| w == b"beginbfchar")
             {
-                streams.push(slice.to_vec());
-            } else if let Some(inflated) = inflate_stream(slice) {
-                streams.push(inflated);
+                Some(slice.to_vec())
+            } else {
+                inflate_stream(slice)
+            };
+            if let Some(buf) = maybe {
+                if total_inflated.saturating_add(buf.len()) <= MAX_TOTAL_INFLATED {
+                    total_inflated += buf.len();
+                    streams.push(buf);
+                } else {
+                    break;
+                }
             }
         }
         pos = e_pos + 9;
@@ -604,8 +616,19 @@ pub fn extract_pdf_text(bytes: &[u8]) -> Result<String, String> {
     Ok(result)
 }
 
+fn is_unsafe_local_path(s: &str) -> bool {
+    let t = s.trim();
+    t.is_empty()
+        || t.starts_with(r"\\")
+        || t.starts_with("//")
+        || t.bytes().any(|b| b < 0x20 || b == 0x7f)
+}
+
 /// Convert a PDF to Markdown in pure Rust, cached by SHA-1 content hash next to the PDF.
 pub fn to_markdown(pdf: &Path) -> Result<PathBuf, String> {
+    if is_unsafe_local_path(&pdf.to_string_lossy()) {
+        return Err("Network/UNC or control-character PDF paths are not allowed.".into());
+    }
     let md_meta = std::fs::metadata(pdf).map_err(|e| format!("Could not read PDF: {e}"))?;
     if md_meta.len() as usize > MAX_PDF_BYTES {
         return Err("PDF exceeds the 50 MiB size limit.".into());
@@ -631,11 +654,16 @@ pub fn to_markdown(pdf: &Path) -> Result<PathBuf, String> {
         .unwrap_or_else(|| "document.pdf".into());
     let markdown = format!("# {title}\n\n{text}\n");
 
-    let tmp = cache_dir.join(format!("{sha}.{}.md.tmp", std::process::id()));
+    static PDF_TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let seq = PDF_TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = cache_dir.join(format!("{sha}.{}.{seq}.md.tmp", std::process::id()));
     std::fs::write(&tmp, markdown.as_bytes())
         .map_err(|e| format!("Could not write temporary Markdown: {e}"))?;
     if let Err(e) = std::fs::rename(&tmp, &out) {
         let _ = std::fs::remove_file(&tmp);
+        if out.is_file() {
+            return Ok(out);
+        }
         return Err(format!("Could not save cached Markdown: {e}"));
     }
     Ok(out)
@@ -698,6 +726,10 @@ pub(crate) fn attach_to_prompt(prompt: &str, files: &[String], api_brain: bool) 
         let mut remaining = ATTACHMENT_LIMIT;
         let mut truncated = false;
         for f in files {
+            if is_unsafe_local_path(f) {
+                p.push_str(&format!("\n[{f}: skipped — network/UNC or invalid path]\n"));
+                continue;
+            }
             if is_image(f) {
                 p.push_str(&format!(
                     "\n[{f}: image; this API brain cannot view local images]\n"

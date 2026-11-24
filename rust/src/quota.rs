@@ -91,8 +91,10 @@ impl Predictor {
             set_i(a, "samples", samples);
             persist = samples % 5 == 0;
         }
-        if persist {
-            let _ = write_json(&self.path, &guard);
+        let snapshot = if persist { Some(guard.clone()) } else { None };
+        drop(guard);
+        if let Some(snap) = snapshot {
+            let _ = write_json(&self.path, &snap);
         }
     }
 
@@ -153,14 +155,17 @@ impl Predictor {
     }
 
     pub fn note_handoff(&self, key: &str) {
-        let mut guard = self.lock();
-        {
-            let m = ensure_obj(&mut guard);
-            let a = acct_mut(m, key);
-            let n = i_of(a, "handoffs") + 1;
-            set_i(a, "handoffs", n);
-        }
-        let _ = write_json(&self.path, &guard);
+        let snapshot = {
+            let mut guard = self.lock();
+            {
+                let m = ensure_obj(&mut guard);
+                let a = acct_mut(m, key);
+                let n = i_of(a, "handoffs") + 1;
+                set_i(a, "handoffs", n);
+            }
+            guard.clone()
+        };
+        let _ = write_json(&self.path, &snapshot);
     }
 }
 

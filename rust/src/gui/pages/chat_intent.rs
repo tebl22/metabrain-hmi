@@ -70,7 +70,8 @@ fn contains_phrase(haystack: &str, needle: &str) -> bool {
         if left_ok && right_ok {
             return true;
         }
-        start = abs + 1;
+        let step = haystack[abs..].chars().next().map_or(1, char::len_utf8);
+        start = abs + step;
     }
     false
 }
@@ -165,10 +166,26 @@ fn extract_directive_windows(norm: &str) -> Vec<String> {
             let left_ok = abs == 0 || !norm.as_bytes()[abs - 1].is_ascii_alphanumeric();
             if left_ok {
                 let after = &norm[abs + trig.len()..];
-                let snippet: String = after
-                    .split([',', '.', ';', '\n', '?', '!'])
-                    .next()
-                    .unwrap_or("")
+                // Split clause punctuation without breaking dotted model versions like `gpt-6.2-sol` or `gemini-3.5-flash`.
+                let mut end = after.len();
+                let mut chars = after.char_indices().peekable();
+                while let Some((idx, ch)) = chars.next() {
+                    if matches!(ch, ',' | ';' | '\n' | '?' | '!') {
+                        end = idx;
+                        break;
+                    }
+                    if ch == '.' {
+                        let next_is_sep = chars
+                            .peek()
+                            .map(|(_, nc)| nc.is_whitespace())
+                            .unwrap_or(true);
+                        if next_is_sep {
+                            end = idx;
+                            break;
+                        }
+                    }
+                }
+                let snippet: String = after[..end]
                     .split_whitespace()
                     .take(4)
                     .collect::<Vec<_>>()
@@ -293,13 +310,17 @@ fn match_model_in_window(window: &str, brain: &BrainCandidate) -> Option<(String
             .trim_start_matches("gpt-");
         let stripped_spaced = stripped.replace(['-', '_'], " ");
 
+        const GENERIC_STRIPPED: &[&str] = &["chat", "pro", "mini", "base", "code", "local", "auto"];
         for variant in [
             slug_norm.as_str(),
             slug_spaced.as_str(),
             stripped,
             stripped_spaced.as_str(),
         ] {
-            if variant.len() >= 3 && contains_phrase(window, variant) {
+            if variant.len() >= 3
+                && !GENERIC_STRIPPED.contains(&variant)
+                && contains_phrase(window, variant)
+            {
                 let score = variant.len() * 10 + 50;
                 if best.as_ref().is_none_or(|(_, s)| score > *s) {
                     best = Some((slug.clone(), score));
@@ -386,6 +407,7 @@ fn match_brain_in_window(window: &str, brain: &BrainCandidate) -> Option<usize> 
         "claude_code" | "anthropic" => &["claude code", "claude"],
         "codex" => &["codex", "chatgpt", "openai codex"],
         "antigravity" | "gemini_cli" => &["antigravity", "gemini", "google"],
+        "ollama" => &["ollama", "local"],
         "openai" => {
             if name_norm.contains("deepseek") || id_norm.contains("deepseek") {
                 &["deepseek", "barato"]
@@ -451,22 +473,32 @@ pub fn detect_chat_intent(text: &str, brains: &[Value], chain: &[Value]) -> Opti
     let windows = extract_directive_windows(&norm);
 
     // Check explicit "auto" reset directive: "usa auto", "/model auto", "en automatico"
+    // Avoid matching hyphenated prose like "with auto-retry" or "use auto layout".
     for w in &windows {
-        if contains_phrase(w, "auto") || contains_phrase(w, "automatico") {
-            return Some(ChatIntent {
-                brain_id: "auto".into(),
-                brain_name: "Auto".into(),
-                model: String::new(),
-                build_mode,
-                parallel: false,
-                available: true,
-                reason: String::new(),
-                brain_index: None,
-                key: format!(
-                    "auto:{}",
-                    build_mode.map(|b| if b { "b" } else { "p" }).unwrap_or("x")
-                ),
-            });
+        let first_tok = w.split_whitespace().next().unwrap_or("");
+        if first_tok == "auto" || first_tok == "automatico" {
+            let second = w.split_whitespace().nth(1).unwrap_or("");
+            if second.is_empty()
+                || matches!(
+                    second,
+                    "para" | "y" | "for" | "and" | "en" | "por" | "con" | "to"
+                )
+            {
+                return Some(ChatIntent {
+                    brain_id: "auto".into(),
+                    brain_name: "Auto".into(),
+                    model: String::new(),
+                    build_mode,
+                    parallel: false,
+                    available: true,
+                    reason: String::new(),
+                    brain_index: None,
+                    key: format!(
+                        "auto:{}",
+                        build_mode.map(|b| if b { "b" } else { "p" }).unwrap_or("x")
+                    ),
+                });
+            }
         }
     }
 
@@ -627,5 +659,34 @@ mod tests {
         let p = detect_chat_intent("Run this in parallel", &brains, &all_down).unwrap();
         assert!(p.parallel);
         assert!(!p.available);
+    }
+
+    #[test]
+    fn handles_dotted_versions_utf8_and_avoids_prose_hijacks() {
+        let (mut brains, chain) = sample_brains();
+        brains.push(json!({
+            "id": "ds_chat",
+            "name": "DeepSeek Chat",
+            "kind": "openai",
+            "models": ["deepseek-chat"]
+        }));
+        brains.push(json!({
+            "id": "ollama_local",
+            "name": "Ollama",
+            "kind": "ollama",
+            "models": ["llama3"]
+        }));
+        // Dotted model version must not be truncated at `.`
+        let v = detect_chat_intent("use gpt-6.2-sol for this refactor", &brains, &chain).unwrap();
+        assert_eq!(v.brain_id, "codex_main");
+        assert_eq!(v.model, "gpt-6.2-sol");
+        // Ollama kind alias works
+        let ol = detect_chat_intent("use ollama to summarize", &brains, &chain).unwrap();
+        assert_eq!(ol.brain_id, "ollama_local");
+        // Ordinary prose with "chat" or "auto-retry" must not hijack the composer
+        assert!(detect_chat_intent("help me with chat layout", &brains, &chain).is_none());
+        assert!(detect_chat_intent("fix login with auto-retry", &brains, &chain).is_none());
+        // Multi-byte UTF-8 boundary check must never panic
+        assert!(detect_chat_intent("usa çê🚀 para probar", &brains, &chain).is_none());
     }
 }

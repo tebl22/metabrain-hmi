@@ -68,6 +68,8 @@ pub struct AlarmEntry {
     pub text: String,
 }
 
+type TaskLedgerSeen = HashMap<String, (i64, i64, f64)>;
+
 pub struct Supervisor {
     pub cfg: Arc<Config>,
     pub state: Arc<State>,
@@ -99,8 +101,8 @@ pub struct Supervisor {
     pub(super) comeback_prev: Mutex<HashMap<String, String>>,
     /// Last set of available brain IDs evaluated by `auto_architect`.
     pub(super) auto_arch_last: Mutex<String>,
-    /// High-water mark of task tokens already recorded into the ledger.
-    pub(super) task_ledger_seen: Mutex<Option<HashMap<String, (i64, i64)>>>,
+    /// High-water mark of task `(tokens, cached, usd)` already recorded into the ledger.
+    pub(super) task_ledger_seen: Mutex<Option<TaskLedgerSeen>>,
 }
 
 impl Supervisor {
@@ -174,6 +176,7 @@ impl Supervisor {
             .max(1) as usize;
         self.tasks.set_global_limit(total);
         self.tasks.set_verify_cfg(self.cfg.get());
+        self.services.update_cfg(self.cfg.get());
         self.write_gate(None);
     }
 
@@ -218,9 +221,19 @@ impl Supervisor {
         let brains = self.brain_list();
         std::thread::scope(|scope| {
             for b in &brains {
+                let st = self.state.get(&b.id);
+                let active_acct = (b.kind == "claude_code")
+                    .then(|| st.os("account"))
+                    .flatten();
+                let failover = &self.failover;
                 scope.spawn(move || {
-                    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| b.slow_poll()))
-                        .is_err()
+                    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        b.slow_poll();
+                        if let Some(acct) = active_acct.as_deref() {
+                            let _ = failover.quota_for(b, acct, true);
+                        }
+                    }))
+                    .is_err()
                     {
                         log(&format!("slow_poll: panic en {}", b.id));
                     }
@@ -249,6 +262,9 @@ impl Supervisor {
                 }
             }
             sent.insert(text.clone(), t);
+            if sent.len() > 200 {
+                sent.retain(|_, v| t - *v < 1800.0);
+            }
         }
         let Some(tok) = secret(&tg.s("token_env")) else {
             return;
@@ -286,9 +302,10 @@ impl Supervisor {
         chain.retain(|b| {
             !excluded.contains(&b["id"]) && crate::tasks::can_run_task_on(&b.s("kind"), mode)
         });
+        let expanded_cwd = crate::util::expand_s(cwd);
         let verified = mode != "plan"
-            && !cwd.is_empty()
-            && crate::verify::detect(std::path::Path::new(cwd), &cfg).is_some();
+            && !expanded_cwd.is_empty()
+            && crate::verify::detect(std::path::Path::new(&expanded_cwd), &cfg).is_some();
         let v = crate::learn::route_auto_in(&self.router, &cfg, &chain, project, task, verified);
         self.diary.add(
             "MetaBrain",
@@ -333,9 +350,14 @@ impl Supervisor {
     pub fn escalate_task(&self, meta: &Value, failure: &str) -> Option<String> {
         let cfg = crate::router::task_routing_config(self.cfg.get());
         let mut chain = self.chain(crate::util::now());
+        let provider_failure = meta.s("verify_cmd").is_empty();
+        let mut excluded = meta.arr("route_excluded");
+        if provider_failure && !meta.s("brain").is_empty() && !excluded.contains(&meta["brain"]) {
+            excluded.push(meta["brain"].clone());
+        }
         chain.retain(|b| {
-            b["id"] != meta["brain"]
-                && !meta.arr("route_excluded").contains(&b["id"])
+            (!provider_failure || b["id"] != meta["brain"])
+                && !excluded.contains(&b["id"])
                 && crate::tasks::can_run_task_on(&b.s("kind"), &meta.s("mode"))
         });
         let cwd = {
@@ -362,10 +384,8 @@ impl Supervisor {
             .get("route_level")
             .and_then(|v| v.as_u64())
             .unwrap_or(3) as u8;
-        let provider_failure = meta.s("verify_cmd").is_empty();
         let v = if provider_failure {
-            self.router
-                .route(&cfg, &chain, &project, &base, Some(level))
+            crate::learn::route_auto_in(&self.router, &cfg, &chain, &project, &base, false)
         } else {
             crate::learn::escalate_after(
                 &self.router,
@@ -377,7 +397,8 @@ impl Supervisor {
                 &meta.s("route_cand"),
             )
         };
-        if v.is_null() {
+        let pick = v.get("pick").cloned().unwrap_or(Value::Null);
+        if v.is_null() || pick.s("brain").is_empty() {
             self.diary.add(
                 "MetaBrain",
                 &format!(
@@ -388,7 +409,6 @@ impl Supervisor {
             );
             return None;
         }
-        let pick = v.get("pick").cloned().unwrap_or(Value::Null);
         let bcfg = self.cfg.brain(&pick.s("brain"))?;
         let check = meta.s("verify_cmd");
         let prompt = if provider_failure {
@@ -404,11 +424,13 @@ impl Supervisor {
         if !meta.s("wt_path").is_empty() && crate::tasks::task_work_dir(meta).is_err() {
             return None;
         }
+        let wt_owner = meta.os("worktree_owner").unwrap_or_else(|| meta.s("id"));
         let mut extra = json!({
             "route_id": v.s("id"), "route_level": v["level"], "route_cand": pick.s("candidate"),
             "base_prompt": base, "escalations": meta.get("escalations").and_then(|x| x.as_u64()).unwrap_or(0) + 1,
             "escalated_from": meta.s("id"), "cwd_project": cwd,
-            "route_excluded": meta.arr("route_excluded"),
+            "route_excluded": excluded,
+            "worktree_owner": wt_owner,
         });
         for key in ["wt_path", "branch", "wt_base"] {
             extra[key] = meta[key].clone();
@@ -425,12 +447,21 @@ impl Supervisor {
             extra,
         ) {
             Ok(m) => {
-                let text = format!(
-                    "\"{}\" no pasó {check}; reintenta con {} en {}",
-                    meta.s("title"),
-                    pick.s("model"),
-                    bcfg.s("name")
-                );
+                let text = if provider_failure {
+                    format!(
+                        "\"{}\" falló por error del proveedor; reintenta con {} en {}",
+                        meta.s("title"),
+                        pick.s("model"),
+                        bcfg.s("name")
+                    )
+                } else {
+                    format!(
+                        "\"{}\" no pasó {check}; reintenta con {} en {}",
+                        meta.s("title"),
+                        pick.s("model"),
+                        bcfg.s("name")
+                    )
+                };
                 self.diary.add("MetaBrain", &text, "warning");
                 crate::insights::notify("MetaBrain", &text);
                 m.os("id")

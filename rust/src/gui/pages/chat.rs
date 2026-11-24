@@ -2050,9 +2050,27 @@ pub(super) fn composer_box(
                                         .clicked()
                                     {
                                         app.ui.auto_intent_dismissed.insert(draft_id.clone(), det.key.clone());
+                                        let prev = app.ui.auto_intent_prev.remove(&draft_id);
                                         if fresh {
-                                            app.ui.brain = "auto".into();
-                                            app.ui.model.clear();
+                                            if let Some((pb, pm, pbuild)) = prev {
+                                                app.ui.brain = pb;
+                                                app.ui.model = pm;
+                                                app.ui.build = pbuild;
+                                            } else {
+                                                app.ui.brain = "auto".into();
+                                                app.ui.model.clear();
+                                            }
+                                        } else if let Some((pb, pm, _)) = prev {
+                                            if pb.is_empty() {
+                                                app.ui.reply_brain.remove(&draft_id);
+                                            } else {
+                                                app.ui.reply_brain.insert(draft_id.clone(), pb);
+                                            }
+                                            if pm.is_empty() {
+                                                app.ui.reply_model.remove(&draft_id);
+                                            } else {
+                                                app.ui.reply_model.insert(draft_id.clone(), pm);
+                                            }
                                         } else {
                                             app.ui.reply_brain.remove(&draft_id);
                                             app.ui.reply_model.remove(&draft_id);
@@ -2088,7 +2106,11 @@ pub(super) fn composer_box(
                     }
                 }
             }
-            let paste = images.is_empty() && ui.ctx().input(|i| i.focused) && ctrl_v_pressed();
+            let composer_focused = ui.memory(|m| m.has_focus(edit_id));
+            let paste = images.is_empty()
+                && composer_focused
+                && ui.ctx().input(|i| i.focused)
+                && ctrl_v_pressed();
             if paste {
                 for f in paste_attachments() {
                     if !draft.files.contains(&f) {
@@ -2492,8 +2514,7 @@ pub(super) fn composer_box(
                                         app.say("Started parallel orchestration in a new thread", INFO);
                                         submit_chat(app, "api/tasks", body);
                                     } else {
-                                        let safe_brain = if brain == "auto" { String::new() } else { brain };
-                                        let body = json!({"text": draft.reply.trim(), "files": draft.files, "brain": safe_brain, "model": model});
+                                        let body = json!({"text": draft.reply.trim(), "files": draft.files, "brain": brain, "model": model});
                                         submit_chat(app, &format!("api/tasks/{id}/message"), body);
                                     }
                                 }

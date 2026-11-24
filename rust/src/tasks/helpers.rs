@@ -60,18 +60,27 @@ pub(super) fn clip(s: &str, n: usize) -> String {
 }
 
 pub(super) fn terminate_tree(pid: u32) {
-    let mut cmd = if cfg!(windows) {
+    if cfg!(windows) {
         let mut cmd = Command::new("taskkill");
         cmd.args(["/T", "/F", "/PID", &pid.to_string()]);
-        cmd
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+        hidden(&mut cmd);
+        let _ = cmd.status();
     } else {
-        let mut cmd = Command::new("kill");
-        cmd.args(["-9", &pid.to_string()]);
-        cmd
-    };
-    cmd.stdout(Stdio::null()).stderr(Stdio::null());
-    hidden(&mut cmd);
-    let _ = cmd.status();
+        // Kill the child's entire process group created by `util::hidden` (`process_group(0)`),
+        // then also signal the leader PID directly as a fallback.
+        let pgid = format!("-{pid}");
+        let mut gcmd = Command::new("kill");
+        gcmd.args(["-9", &pgid])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let _ = gcmd.status();
+        let mut pcmd = Command::new("kill");
+        pcmd.args(["-9", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let _ = pcmd.status();
+    }
 }
 
 pub(super) fn new_id() -> String {

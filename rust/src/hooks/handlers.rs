@@ -167,11 +167,25 @@ pub(super) fn shadow_bg(ev: &Value, cfg: &Value) -> String {
     let Some(actual) = _actual_model(ev) else {
         return String::new();
     };
+    let gate = _gate();
+    let gate_brains = gate.o("brains");
     let chain: Vec<Value> = cfg
         .arr("brains")
         .into_iter()
         .filter(|b| b.b("enabled", true))
-        .map(|b| json!({"id": b.s("id"), "available": true, "kind": b.s("kind")}))
+        .map(|b| {
+            let id = b.s("id");
+            let paused = gate_brains
+                .get(&id)
+                .map(|g| truthy(g.get("paused")))
+                .unwrap_or(false);
+            json!({
+                "id": id,
+                "name": b.s("name"),
+                "available": !paused,
+                "kind": b.s("kind")
+            })
+        })
         .collect();
     let router = crate::router::Router::new(None);
     crate::learn::shadow(&router, cfg, &chain, &_project(ev), &_task_of(ev), &actual);
@@ -232,20 +246,31 @@ fn pre_tool_inner(
             ));
         }
 
-        // Read-only brains may inspect but never modify.
+        // Read-only brains may inspect via a strict allowlist of read-only tools and commands.
         if truthy(g.get("readonly")) {
             let name = brain_name(cfg, bid);
             let msg = format!(
                 "MetaBrain: {name} está en modo SOLO LECTURA desde el panel. Analiza y propone; no edites ni ejecutes comandos que cambien archivos."
             );
-            if is_edit_tool(&tool) {
-                return _deny(&msg);
-            }
+            const READONLY_TOOLS: [&str; 10] = [
+                "Read",
+                "Glob",
+                "Grep",
+                "LS",
+                "WebFetch",
+                "WebSearch",
+                "TodoRead",
+                "TaskList",
+                "TaskGet",
+                "AskUserQuestion",
+            ];
             if tool == "Bash" || tool == "PowerShell" {
                 let cmd = inp.get("command").and_then(|v| v.as_str()).unwrap_or("");
                 if !is_readonly_command(cmd) {
                     return _deny(&msg);
                 }
+            } else if !READONLY_TOOLS.contains(&tool.as_str()) {
+                return _deny(&msg);
             }
         }
 

@@ -32,6 +32,7 @@ fn table() -> &'static Vec<(Regex, &'static str)> {
             (r"^(.+?): weekly quota (\d+)%$", "$1: cuota semanal al $2 %"),
             (r"^(.+?): weekly_opus quota (\d+)%$", "$1: cuota semanal de Opus al $2 %"),
             (r"^(.+?): weekly_sonnet quota (\d+)%$", "$1: cuota semanal de Sonnet al $2 %"),
+            (r"^(.+?): quota (\d+)%$", "$1: cuota al $2 %"),
             (r"^(.+?) saving budget: (.*)$", "$1 ahorrando presupuesto: $2"),
             (r"^(.+?) stepped down to save budget \((.+)\)$", "$1 cambió a un modelo más barato para ahorrar presupuesto ($2)"),
             (r"^(.+?) balance ([\d.]+) (\w+)$", "$1: saldo $2 $3"),
@@ -110,13 +111,15 @@ pub fn snapshot_es(snap: &mut Value) {
                     }
                 }
             }
-            if let Some(recs) = b
-                .get_mut("advice")
-                .and_then(|a| a.get_mut("recs"))
-                .and_then(|x| x.as_array_mut())
-            {
-                for r in recs {
-                    fix_str(r, "text");
+            for key in ["pilot", "advice"] {
+                if let Some(recs) = b
+                    .get_mut(key)
+                    .and_then(|a| a.get_mut("recs"))
+                    .and_then(|x| x.as_array_mut())
+                {
+                    for r in recs {
+                        fix_str(r, "text");
+                    }
                 }
             }
             for list in ["sessions", "subagents"] {
@@ -138,8 +141,8 @@ mod tests {
     #[test]
     fn translates_known_and_keeps_unknown() {
         assert_eq!(
-            es("Claude 1 (ESPE): not signed in"),
-            "Claude 1 (ESPE): sin sesión iniciada"
+            es("Claude 1 (Work): not signed in"),
+            "Claude 1 (Work): sin sesión iniciada"
         );
         assert_eq!(
             es("Claude 2: session quota 92%"),
@@ -160,20 +163,20 @@ mod tests {
     #[test]
     fn translates_every_quota_window() {
         assert_eq!(
-            es("Claude 1 (ESPE): session quota 92%"),
-            "Claude 1 (ESPE): cuota de 5 horas al 92 %"
+            es("Claude 1 (Work): session quota 92%"),
+            "Claude 1 (Work): cuota de 5 horas al 92 %"
         );
         assert_eq!(
-            es("Claude 1 (ESPE): weekly quota 80%"),
-            "Claude 1 (ESPE): cuota semanal al 80 %"
+            es("Claude 1 (Work): weekly quota 80%"),
+            "Claude 1 (Work): cuota semanal al 80 %"
         );
         assert_eq!(
-            es("Claude 1 (ESPE): weekly_opus quota 50%"),
-            "Claude 1 (ESPE): cuota semanal de Opus al 50 %"
+            es("Claude 1 (Work): weekly_opus quota 50%"),
+            "Claude 1 (Work): cuota semanal de Opus al 50 %"
         );
         assert_eq!(
-            es("Claude 1 (ESPE): weekly_sonnet quota 5%"),
-            "Claude 1 (ESPE): cuota semanal de Sonnet al 5 %"
+            es("Claude 1 (Work): weekly_sonnet quota 5%"),
+            "Claude 1 (Work): cuota semanal de Sonnet al 5 %"
         );
         // No English identifier survives in the Spanish wording.
         assert!(!es("C: weekly quota 10%").contains("weekly"));

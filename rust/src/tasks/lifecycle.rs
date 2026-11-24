@@ -5,7 +5,7 @@ use super::helpers::{
     follow_up_prompt, git_cmd, mk_event, new_id, put, terminate_tree, turn_busy,
 };
 use super::TaskManager;
-use crate::util::{expand_s, now, write_json, J};
+use crate::util::{now, write_json, J};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -56,10 +56,10 @@ impl TaskManager {
         let base = if cwd.trim().is_empty() {
             crate::util::home()
         } else {
-            PathBuf::from(expand_s(cwd))
+            crate::extensions::sanitize_project_dir(cwd)?
         };
         if !base.is_dir() {
-            return Err(format!("La carpeta no existe: {}", base.display()));
+            return Err("The selected project folder does not exist.".into());
         }
 
         let id = new_id();
@@ -363,6 +363,7 @@ impl TaskManager {
             if !retry {
                 self.emit(id, mk_event("text", event));
             }
+            self.emit(id, mk_event("status", json!({ "status": "queued" })));
             let me = Arc::clone(self);
             let (id2, model, effort, prompt) = (
                 id.to_string(),
@@ -373,6 +374,9 @@ impl TaskManager {
             std::thread::spawn(move || {
                 if let Some(_slot) = me.acquire(&brain, brain_parallel_limit(&cfg), &id2, &name) {
                     me.run_openai(&id2, &cfg, &model, &effort, &prompt);
+                    if retry {
+                        me.post_run(&id2, &turn_id);
+                    }
                 }
                 me.finish_interruption(&id2, &turn_id);
             });
@@ -390,6 +394,9 @@ impl TaskManager {
             let brain = meta.s("brain");
             let name = meta.s("brain_name");
             let cfg = find_brain_cfg(&brain);
+            if cfg.is_null() {
+                return Err("The selected brain is no longer available.".into());
+            }
             let cupo = brain_parallel_limit(&cfg);
             let (model, effort) = if agent == crate::cli_agents::Agent::Codex {
                 let legacy_setting = |key: &str| {
@@ -405,10 +412,23 @@ impl TaskManager {
                 let effort_request = meta["effort_request"]
                     .as_str()
                     .unwrap_or_else(|| legacy_setting("effort"));
-                let (run_model, run_effort) = switch
-                    .map_or((model_request, effort_request), |(_, model, effort)| {
-                        (model, effort)
-                    });
+                let (run_model, run_effort) = switch.map_or(
+                    (model_request, effort_request),
+                    |(_, sw_model, sw_effort)| {
+                        (
+                            if sw_model.is_empty() {
+                                model_request
+                            } else {
+                                sw_model
+                            },
+                            if sw_effort.is_empty() {
+                                effort_request
+                            } else {
+                                sw_effort
+                            },
+                        )
+                    },
+                );
                 let settings =
                     crate::cli_agents::codex_turn_settings(&cfg, &text, run_model, run_effort);
                 put(&mut m, "model_request", json!(model_request));
@@ -427,17 +447,24 @@ impl TaskManager {
             put(&mut m, "updated", json!(now()));
             write_json(&self.meta_path(id), &m)
                 .map_err(|e| format!("No se pudo iniciar el turno: {e}"))?;
+            for warn in &attach_warnings {
+                self.emit(id, mk_event("info", json!({ "text": warn })));
+            }
             if let Some(notice) = switch_notice {
                 self.emit(id, mk_event("info", json!({ "text": notice })));
             }
             if !retry {
                 self.emit(id, mk_event("text", event));
             }
+            self.emit(id, mk_event("status", json!({ "status": "queued" })));
             let me = Arc::clone(self);
             let (id2, mode) = (id.to_string(), meta.s("mode"));
             std::thread::spawn(move || {
                 if let Some(_slot) = me.acquire(&brain, cupo, &id2, &name) {
                     me.run_cli(&id2, agent, &prompt, &work, &model, &effort, &mode);
+                    if retry {
+                        me.post_run(&id2, &turn_id);
+                    }
                 }
                 me.finish_interruption(&id2, &turn_id);
             });
@@ -458,6 +485,9 @@ impl TaskManager {
             return Err(format!("La carpeta no existe: {}", work.display()));
         }
         let cfg = find_brain_cfg(&meta.s("brain"));
+        if cfg.is_null() {
+            return Err("The selected brain is no longer available.".into());
+        }
         let cdir = cfg.os("config_dir");
         let model = meta.s("model");
         let effort = meta.s("effort");
@@ -472,6 +502,9 @@ impl TaskManager {
         put(&mut m, "updated", json!(now()));
         write_json(&self.meta_path(id), &m)
             .map_err(|e| format!("No se pudo iniciar el turno: {e}"))?;
+        for warn in &attach_warnings {
+            self.emit(id, mk_event("info", json!({ "text": warn })));
+        }
         if let Some(notice) = switch_notice {
             self.emit(id, mk_event("info", json!({ "text": notice })));
         }
@@ -485,6 +518,9 @@ impl TaskManager {
         std::thread::spawn(move || {
             if let Some(_slot) = me.acquire(&brain, cupo, &id2, &name) {
                 me.run_claude(&id2, &prompt, &work, &model, &effort, &mode, cdir, session);
+                if retry {
+                    me.post_run(&id2, &turn_id);
+                }
             }
             me.finish_interruption(&id2, &turn_id);
         });
@@ -514,12 +550,9 @@ impl TaskManager {
                     false
                 }
             };
-            let route_id = m.os("route_id");
-            let project = Path::new(&m.s("cwd"))
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            crate::learn::discard_pending(&project, route_id.as_deref());
+            if let Some(rid) = m.os("route_id") {
+                crate::learn::discard_pending("", Some(&rid));
+            }
             put(&mut m, "status", json!("stopping"));
             put(&mut m, "error", json!("Stopped by user"));
             put(&mut m, "updated", json!(now()));
@@ -611,11 +644,7 @@ impl TaskManager {
         let cwd = PathBuf::from(m.s("cwd"));
         let wt = m.s("wt_path");
         let branch = m.s("branch");
-        let owner = if m.s("kind") == "parallel" {
-            m.os("worktree_owner").unwrap_or_else(|| id.to_string())
-        } else {
-            id.to_string()
-        };
+        let owner = m.os("worktree_owner").unwrap_or_else(|| id.to_string());
         if wt.is_empty() || branch != format!("metabrain/{owner}") || !m.s("parent_run").is_empty()
         {
             return Err("La tarea no tiene una copia aislada identificable.".into());
@@ -649,6 +678,9 @@ impl TaskManager {
         {
             checked_git(&cwd, &["branch", "-D", "--", &branch])?;
         }
+        put(&mut m, "wt_path", json!(""));
+        put(&mut m, "branch", json!(""));
+        put(&mut m, "wt_base", json!(""));
         put(&mut m, "status", json!("done"));
         put(&mut m, "updated", json!(now()));
         write_json(&self.meta_path(id), &m)

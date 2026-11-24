@@ -261,12 +261,33 @@ pub(super) fn thread(app: &mut App, ui: &mut egui::Ui, snap: &Value, t: &Value, 
                         }
                     }
                 }
-                // Files the agent made or mentioned: images inline, everything else as a card.
+                // Files the agent made or mentioned: cached per (task_id, events.len()) so we
+                // never hammer `std::fs::metadata` at 60 FPS on every render frame.
                 let base = t
                     .os("wt_path")
                     .filter(|d| !d.is_empty())
                     .unwrap_or_else(|| t.s("cwd"));
-                let found = files_in(evs, &base, t.f("created").unwrap_or(0.0), &attachments);
+                let tid_key = t.s("id");
+                let files_cache_id = egui::Id::unique(("thread_files_cache", tid_key.as_str()));
+                let cache_sig = (evs.len(), attachments.len(), base.clone());
+                let found: Vec<std::path::PathBuf> = {
+                    let cached = ui.ctx().data(|d| {
+                        d.get_temp::<((usize, usize, String), Vec<std::path::PathBuf>)>(
+                            files_cache_id,
+                        )
+                    });
+                    match cached {
+                        Some((sig, list)) if sig == cache_sig => list,
+                        _ => {
+                            let list =
+                                files_in(evs, &base, t.f("created").unwrap_or(0.0), &attachments);
+                            ui.ctx().data_mut(|d| {
+                                d.insert_temp(files_cache_id, (cache_sig, list.clone()))
+                            });
+                            list
+                        }
+                    }
+                };
                 if !found.is_empty() {
                     files_gallery(ui, &found);
                 }
@@ -753,12 +774,15 @@ fn parallel_panel(
                 let err = b.s("error");
                 let brain_col = brain_color_for(snap, &b.s("brain"));
 
-                // Smooth fade/slide-in entrance per branch card.
-                let appear = ui.ctx().animate_bool_with_time(
-                    egui::Id::unique(("par_branch_in", run_id, b.s("id"))),
-                    true,
-                    0.26,
-                );
+                // Smooth fade/slide-in entrance per branch card using first-seen timestamp.
+                let appear_id = egui::Id::unique(("par_branch_seen", run_id, b.s("id")));
+                let born = ui
+                    .ctx()
+                    .data_mut(|d| *d.get_temp_mut_or_insert_with(appear_id, || t_now));
+                let appear = ((t_now - born) / 0.26).clamp(0.0, 1.0) as f32;
+                if appear < 1.0 {
+                    ui.ctx().request_repaint();
+                }
                 let pulse = if is_running {
                     ((t_now * 3.4 + idx as f64 * 0.7).sin() * 0.5 + 0.5) as f32
                 } else {

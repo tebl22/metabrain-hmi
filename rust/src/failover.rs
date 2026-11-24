@@ -276,7 +276,7 @@ impl Failover {
                     .key("failover_pct")
                     .as_f64()
                     .unwrap_or(EARLY_SWITCH_PCT);
-                let (cur_pct, _) = session_limit(&self.quota_for(&b, &cur, true));
+                let (cur_pct, _) = session_limit(&self.quota_for(&b, &cur, false));
                 let early = cur_pct.map(|p| p >= early_at).unwrap_or(false);
                 if risk >= SWITCH_RISK || early {
                     let why = if early && risk < SWITCH_RISK {
@@ -293,25 +293,42 @@ impl Failover {
                             self.switch(sup, &b, &alt, &format!("quota: {why}"), now);
                         }
                         None => {
-                            sup.diary.add(
-                                "MetaBrain",
-                                &format!(
-                                    "{}: quota almost out and no other account has room",
-                                    brain_name(&b)
-                                ),
-                                "alarm",
-                            );
+                            static NO_ALT_LOG: std::sync::OnceLock<Mutex<HashMap<String, f64>>> =
+                                std::sync::OnceLock::new();
+                            let mut log_map = NO_ALT_LOG
+                                .get_or_init(|| Mutex::new(HashMap::new()))
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner());
+                            let last = log_map.get(&b.id).copied().unwrap_or(0.0);
+                            if now - last >= 600.0 {
+                                log_map.insert(b.id.clone(), now);
+                                sup.diary.add(
+                                    "MetaBrain",
+                                    &format!(
+                                        "{}: quota almost out and no other account has room",
+                                        brain_name(&b)
+                                    ),
+                                    "alarm",
+                                );
+                            }
                         }
                     }
                 }
             } else {
-                let (ppct, _preset) = session_limit(&self.quota_for(&b, &prim, true));
-                let st = sup.state.get(&b.id);
-                let due = st
-                    .f("account_until")
-                    .map(|u| u != 0.0 && now > u)
-                    .unwrap_or(false);
-                let back = ppct.map(|p| p < 50.0).unwrap_or(false) || due;
+                let pq = self.quota_for(&b, &prim, false);
+                let (ppct, _preset) = session_limit(&pq);
+                let pweekly = pq
+                    .arr("limits")
+                    .into_iter()
+                    .find(|l| l.s("group") == "weekly")
+                    .and_then(|l| l.f("pct"));
+                let early_at = sup
+                    .cfg
+                    .key("failover_pct")
+                    .as_f64()
+                    .unwrap_or(EARLY_SWITCH_PCT);
+                let back =
+                    ppct.is_some_and(|p| p < 50.0) && pweekly.map(|w| w < early_at).unwrap_or(true);
                 if back {
                     sup.state.set(
                         &b.id,
@@ -322,6 +339,15 @@ impl Failover {
                         &format!("{}: back to the main account (quota reset)", brain_name(&b)),
                         "info",
                     );
+                } else {
+                    // Cascade to another healthy alternative if the current alternate is also running out.
+                    let (cur_pct, _) = session_limit(&self.quota_for(&b, &cur, false));
+                    let risk = fc.as_ref().and_then(|f| f.f("risk")).unwrap_or(0.0);
+                    if risk >= SWITCH_RISK || cur_pct.is_some_and(|p| p >= early_at) {
+                        if let Some((alt, _)) = self.best_alternative(&b, &cur) {
+                            self.switch(sup, &b, &alt, "quota: cascade to next account", now);
+                        }
+                    }
                 }
             }
         }
@@ -342,11 +368,25 @@ impl Failover {
             .unwrap_or_else(|| "en".to_string());
         let summarizer = self.summarizer(sup);
 
-        let mut papers: Vec<PathBuf> = Vec::new();
-        for s in self.live_sessions(b, now) {
-            let (files, _info) =
-                write_handoff(&s.path, &name, &cur, reason, &lang, summarizer.as_ref());
-            papers.extend(files);
+        let live = self.live_sessions(b, now);
+        let n_live = live.len();
+        if !live.is_empty() {
+            let paths: Vec<PathBuf> = live.into_iter().map(|s| s.path).collect();
+            let name_bg = name.clone();
+            let cur_bg = cur.clone();
+            let reason_bg = reason.to_string();
+            std::thread::spawn(move || {
+                for p in paths {
+                    let _ = write_handoff(
+                        &p,
+                        &name_bg,
+                        &cur_bg,
+                        &reason_bg,
+                        &lang,
+                        summarizer.as_ref(),
+                    );
+                }
+            });
         }
 
         sup.state.set(
@@ -357,8 +397,7 @@ impl Failover {
         sup.diary.add(
             "MetaBrain",
             &format!(
-                "{name} moved to account {target} ({reason}); {} handoff file(s) written",
-                papers.len()
+                "{name} moved to account {target} ({reason}); handing off {n_live} live session(s)"
             ),
             "alarm",
         );
@@ -390,6 +429,9 @@ impl Failover {
 
         let days = b.config.key("history_days").as_i64().unwrap_or(30);
         let sc = scanner_for(&cur, days);
+        if !sc.ready() {
+            sc.scan(0.0);
+        }
         let sessions = sc.sessions();
         let s = sessions
             .into_iter()

@@ -5,6 +5,7 @@ build/*.spec
 
 # Local runtime data, caches, backups, and secrets (never commit)
 data/
+.metabrain/
 .md-cache/
 *.log
 *.bak

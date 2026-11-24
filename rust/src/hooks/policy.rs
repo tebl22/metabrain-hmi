@@ -12,7 +12,7 @@ const READONLY_PREFIXES: [&str; 21] = [
     "pwd",
     "echo",
     "which",
-    "where",
+    "where.exe",
     "git status",
     "git diff",
     "git log",
@@ -55,11 +55,26 @@ fn has_shell_metachars(cmd: &str) -> bool {
             return true;
         }
         // Backslash escapes differ between bash and PowerShell (where `\` is literal).
-        // Reject any backslash before quotes or shell operators to prevent parser/shell desync.
+        // Reject any backslash before quotes, shell operators, or flag characters (`-`) to prevent
+        // parser/shell desync and backslash-escaped flag bypasses (e.g. `\-delete`, `\--pre`).
         if ch == '\\'
             && matches!(
                 chars.peek(),
-                Some('\'' | '"' | ';' | '|' | '&' | '>' | '<' | '(' | ')' | '`' | '$')
+                Some(
+                    '\'' | '"'
+                        | ';'
+                        | '|'
+                        | '&'
+                        | '>'
+                        | '<'
+                        | '('
+                        | ')'
+                        | '{'
+                        | '}'
+                        | '`'
+                        | '$'
+                        | '-'
+                )
             )
         {
             return true;
@@ -81,8 +96,11 @@ fn has_shell_metachars(cmd: &str) -> bool {
                 return true;
             }
         }
-        // Outside all quotes, reject shell chaining, piping, redirection, subshells, and backgrounding.
-        if !in_single && !in_double && matches!(ch, ';' | '|' | '&' | '>' | '<' | '(' | ')') {
+        // Outside all quotes, reject shell chaining, piping, redirection, subshells, scriptblocks, and backgrounding.
+        if !in_single
+            && !in_double
+            && matches!(ch, ';' | '|' | '&' | '>' | '<' | '(' | ')' | '{' | '}')
+        {
             return true;
         }
     }
@@ -91,7 +109,9 @@ fn has_shell_metachars(cmd: &str) -> bool {
 }
 
 fn unquote_token(tok: &str) -> String {
-    tok.chars().filter(|&c| c != '"' && c != '\'').collect()
+    tok.chars()
+        .filter(|&c| c != '"' && c != '\'' && c != '\\')
+        .collect()
 }
 
 fn has_dangerous_readonly_flags(lower: &str) -> bool {
@@ -125,17 +145,21 @@ fn has_dangerous_readonly_flags(lower: &str) -> bool {
     first == "git"
         && tokens[1..].iter().any(|t| {
             t == "-c"
-                || t.starts_with("-c=")
+                || (t.starts_with("-c") && t.len() > 2)
                 || t == "--config"
                 || t.starts_with("--config=")
+                || t == "--config-env"
+                || t.starts_with("--config-env=")
                 || t == "--output"
                 || t.starts_with("--output=")
                 || t == "-o"
-                || t.starts_with("-o=")
+                || (t.starts_with("-o") && t.len() > 2)
                 || t == "--upload-pack"
                 || t.starts_with("--upload-pack=")
                 || t == "--exec-path"
                 || t.starts_with("--exec-path=")
+                || t == "--ext-diff"
+                || t == "--textconv"
                 || t.contains("ext::")
         })
 }
@@ -177,6 +201,12 @@ mod v14_security_tests {
         assert!(!is_readonly_command(r#"find . '-exec' sh -c id \;"#));
         assert!(!is_readonly_command(r#"git "-c" core.pager=sh log"#));
         assert!(!is_readonly_command("git diff --output=/tmp/x"));
+        assert!(!is_readonly_command(r"find . \-delete"));
+        assert!(!is_readonly_command(r"rg \--pre sh pattern"));
+        assert!(!is_readonly_command("where -InputObject 1 { calc }"));
+        assert!(!is_readonly_command("git --config-env=core.pager=X log"));
+        assert!(!is_readonly_command("git diff -o/tmp/pwn"));
+        assert!(!is_readonly_command("git diff --ext-diff"));
     }
 
     #[test]
