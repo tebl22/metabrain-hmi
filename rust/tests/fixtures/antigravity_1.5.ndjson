@@ -1,0 +1,7 @@
+{"event":"ready"}
+{"event":"step_update","step_update":{"step_index":1,"state":"ACTIVE","step_type":"thinking","thinking_delta":"Analizando el proyecto"}}
+{"event":"step_update","step_update":{"step_index":2,"state":"ACTIVE","step_type":"tool","tool_name":"run_command","tool_info":"cargo check","tool_summary":"Compilar proyecto"}}
+{"event":"step_update","step_update":{"step_index":2,"state":"DONE","step_type":"tool","tool_name":"run_command","tool_info":"cargo check","tool_result":"Finished dev profile","tool_result_is_error":false}}
+{"event":"step_update","step_update":{"step_index":3,"state":"ACTIVE","step_type":"agent_response","text_delta":"Compilación "}}
+{"event":"step_update","step_update":{"step_index":3,"state":"ACTIVE","step_type":"agent_response","text_delta":"exitosa."}}
+{"event":"result","result":{"status":"SUCCESS","response":"Compilación exitosa.","usage":{"input_tokens":9549,"output_tokens":226,"thinking_tokens":223,"cache_read_tokens":4000}}}

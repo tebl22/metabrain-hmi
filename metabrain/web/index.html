@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MetaBrain Monitor</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot" id="overall-dot"></span>
+      <h1>MetaBrain</h1>
+      <span class="badge" id="version-badge">v1.4.0</span>
+      <span class="badge badge-ro">Read-only monitor</span>
+    </div>
+    <div class="meta">
+      <span id="mode-pill" class="pill">Mode: —</span>
+      <span id="host-stats" class="muted">CPU — · RAM —</span>
+    </div>
+  </header>
+
+  <main id="login-view" class="login-card hidden">
+    <h2>LAN Monitor Sign-In</h2>
+    <p class="muted">Enter the 6-digit PIN shown in MetaBrain Settings.</p>
+    <form id="login-form">
+      <input id="pin-input" type="password" inputmode="numeric" maxlength="12" placeholder="6-digit PIN" autocomplete="one-time-code" required />
+      <button type="submit">Unlock Monitor</button>
+    </form>
+    <p id="login-err" class="error hidden"></p>
+  </main>
+
+  <main id="dash-view" class="grid hidden">
+    <section class="card">
+      <div class="card-head">
+        <h2>Brains &amp; Live Quotas</h2>
+        <span id="updated-at" class="muted">Updating…</span>
+      </div>
+      <div id="brains-list" class="stack"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Active Queue</h2>
+        <span id="queue-count" class="muted">0 active</span>
+      </div>
+      <div id="tasks-list" class="stack"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Alarms &amp; Recent Diary</h2>
+        <span id="alarm-count" class="muted">0 alarms</span>
+      </div>
+      <div id="alarms-list" class="stack"></div>
+      <div id="diary-list" class="diary"></div>
+    </section>
+  </main>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>

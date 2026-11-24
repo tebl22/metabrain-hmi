@@ -1,0 +1,22 @@
+# Build output
+rust/target/
+dist/
+build/*.spec
+
+# Local runtime data, caches, backups, and secrets (never commit)
+data/
+.md-cache/
+*.log
+*.bak
+.env
+*.local.json
+.claude/
+HANDOFF*.md
+PLAN_RUST.md
+_respaldo_*/
+rust/_respaldo_*/
+rust/cc_run.*
+rust/vacio.txt
+.pytest_cache/
+__pycache__/
+*.pyc

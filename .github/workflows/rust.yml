@@ -1,0 +1,120 @@
+name: rust-ci
+
+# Builds, verifies, and packages MetaBrain (100% Rust, zero Python).
+on:
+  push:
+    branches: [main]
+    paths: ["rust/**", "metabrain/web/**", "build/metabrain.ico", ".github/workflows/rust.yml"]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+    paths: ["rust/**", "metabrain/web/**", "build/metabrain.ico", ".github/workflows/rust.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: "clippy,rustfmt" }
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: rust }
+      - name: Format check
+        working-directory: rust
+        run: cargo fmt --check
+      - name: Clippy
+        working-directory: rust
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Unit tests
+        working-directory: rust
+        run: cargo test --lib --locked -- --test-threads=1
+      - name: Integration & contract tests
+        working-directory: rust
+        run: cargo test --tests --locked
+
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: "clippy,rustfmt" }
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: rust }
+      - name: Format check
+        working-directory: rust
+        run: cargo fmt --check
+      - name: Clippy
+        working-directory: rust
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Unit tests
+        working-directory: rust
+        run: cargo test --lib --locked -- --test-threads=1
+      - name: Integration & contract tests
+        working-directory: rust
+        run: cargo test --tests --locked
+      - name: Build release
+        working-directory: rust
+        run: cargo build --release --locked
+      - name: Package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory out | Out-Null
+          Copy-Item rust\target\release\MetaBrain.exe, rust\target\release\metabrain-hook.exe out\
+          Copy-Item build\metabrain.ico out\metabrain.ico
+          Copy-Item metabrain\web out\web -Recurse
+          $root = (Resolve-Path out).Path
+          $files = Get-ChildItem -Path $root -Recurse -File | Sort-Object FullName
+          $hashes = foreach ($f in $files) {
+            $rel = $f.FullName.Substring($root.Length + 1).Replace('\', '/')
+            $h = (Get-FileHash -Path $f.FullName -Algorithm SHA256).Hash
+            "$h  $rel"
+          }
+          $hashes | Set-Content -Encoding UTF8 out\SHA256SUMS.txt
+          Compress-Archive -Path out\* -DestinationPath MetaBrain-windows-x64.zip -Force
+      - name: Verify package & checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Expand-Archive -Path MetaBrain-windows-x64.zip -DestinationPath verify_out -Force
+          foreach ($req in @('MetaBrain.exe', 'metabrain-hook.exe', 'metabrain.ico', 'SHA256SUMS.txt', 'web/index.html', 'web/app.js', 'web/style.css')) {
+            if (-not (Test-Path (Join-Path verify_out $req))) {
+              throw "Missing required asset in release zip: $req"
+            }
+          }
+          foreach ($line in (Get-Content verify_out\SHA256SUMS.txt)) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            $parts = $line -split '  ', 2
+            $expected = $parts[0].Trim()
+            $rel = $parts[1].Trim()
+            $actual = (Get-FileHash -Path (Join-Path verify_out $rel) -Algorithm SHA256).Hash
+            if ($actual -ne $expected) {
+              throw "SHA-256 mismatch for $rel"
+            }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MetaBrain-windows-x64
+          path: MetaBrain-windows-x64.zip
+
+  release:
+    needs: [linux, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: MetaBrain-windows-x64
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: MetaBrain-windows-x64.zip

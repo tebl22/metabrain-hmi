@@ -1,0 +1,7 @@
+{"type":"init","session_id":"gem_01","model":"gemini-3-pro"}
+{"type":"message","role":"user","content":"Revisa el estado"}
+{"type":"tool_use","tool_id":"tu_1","tool_name":"read_file","parameters":{"path":"Cargo.toml"}}
+{"type":"tool_result","tool_id":"tu_1","tool_name":"read_file","status":"success","output":"[package]\nname = \"metabrain\""}
+{"type":"message","role":"assistant","content":"El paquete es "}
+{"type":"message","role":"assistant","content":"metabrain."}
+{"type":"result","status":"success","stats":{"input_tokens":4200,"output_tokens":85,"cached_tokens":1500}}

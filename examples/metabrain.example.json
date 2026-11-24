@@ -1,0 +1,42 @@
+{
+  "lang": "en",
+  "port": 8790,
+  "lan": {"enabled": false, "pin": "123456"},
+  "mode": "normal",
+  "rules": {"downgrade_at": 80, "pause_at": 100, "auto_resume": true},
+  "handoff": {"summarizer": "deepseek"},
+  "brains": [
+    {
+      "id": "director", "kind": "claude_code", "name": "Claude (main)", "role": "director",
+      "config_dir": "~/.claude",
+      "failover": ["~/.claude-b"],
+      "budget": {"tokens_day": null, "usd_day": null, "quota_pct": 90},
+      "pilot": "advise",
+      "subagents": {
+        "*": {"max_parallel": 3},
+        "Explore": {"model": "claude-haiku-5-5"},
+        "Plan": {"allow": true}
+      }
+    },
+    {
+      "id": "producer", "kind": "claude_code", "name": "Claude (night jobs)", "role": "producer",
+      "config_dir": "~/.claude-b",
+      "match": {"prompt": "^=== TICKET"},
+      "budget": {"quota_pct": 80}
+    },
+    {
+      "id": "deepseek", "kind": "openai", "name": "DeepSeek", "role": "worker",
+      "base_url": "https://api.deepseek.com", "key_env": "DEEPSEEK_API_KEY", "balance": "deepseek",
+      "ladder": ["deepseek-v4-pro", "deepseek-flash"],
+      "prices": {"deepseek-flash": {"in": 0.27, "out": 1.1, "cache": 0.07}},
+      "budget": {"tokens_day": 300000, "usd_day": 1.0}
+    },
+    {"id": "local", "kind": "ollama", "name": "Ollama", "base_url": "http://127.0.0.1:11434"}
+  ],
+  "services": [
+    {"id": "worker", "name": "Night worker", "cmd": ["python", "worker.py"], "cwd": "~/projects/worker",
+     "pause_file": "~/projects/worker/PAUSE", "heartbeat": "~/projects/worker/heartbeat.txt", "autorestart": true}
+  ],
+  "memory": {"enabled": true, "dir": "~/metabrain-memory", "roots": ["~/projects/*"], "lock_minutes": 20},
+  "telegram": {"enabled": false, "token_env": "METABRAIN_TELEGRAM_TOKEN", "chat_id": ""}
+}

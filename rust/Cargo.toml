@@ -1,0 +1,55 @@
+[package]
+name = "metabrain"
+version = "1.4.0"
+edition = "2021"
+description = "MetaBrain HMI: supervisory control for multi-brain AI orchestration"
+license = "MIT"
+
+[lib]
+name = "metabrain"
+path = "src/lib.rs"
+
+# MetaBrain.exe: the HMI window + tray + supervisor (no console window).
+[[bin]]
+name = "MetaBrain"
+path = "src/main.rs"
+
+# metabrain-hook.exe: console twin used by Claude Code hooks and the command line.
+[[bin]]
+name = "metabrain-hook"
+path = "src/bin/hook.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+regex = "1"
+chrono = "0.4"
+glob = "0.3"
+sha1_smol = "1"
+rand = "0.8"
+ureq = "2"
+tiny_http = "0.12"
+sysinfo = "=0.32.1"
+include_dir = "0.7"
+qrcodegen = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+arboard = { version = "3.7", default-features = false, features = ["image-data"] }
+egui_extras = { version = "0.37", default-features = false, features = ["image", "file"] }
+eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "x11", "wayland", "clipboard", "links"] }
+pulldown-cmark = { version = "0.13", default-features = false }
+flate2 = "1"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+tray-icon = "0.19"
+raw-window-handle = "0.6"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_Security", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse"] }
+
+[build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
