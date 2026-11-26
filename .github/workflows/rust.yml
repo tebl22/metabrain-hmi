@@ -47,7 +47,8 @@ jobs:
           chmod +x out/MetaBrain out/metabrain-hook
           cp -r metabrain/web/. out/web/
           cp LICENSE README.md out/
-          (cd out && find . -type f | sed 's|^\./||' | sort | xargs sha256sum > SHA256SUMS.txt)
+          (cd out && find . -type f ! -name 'SHA256SUMS.txt' | sed 's|^\./||' | sort | xargs sha256sum) > SHA256SUMS.txt
+          mv SHA256SUMS.txt out/SHA256SUMS.txt
           tar -czf MetaBrain-linux-x64.tar.gz -C out .
       - name: Verify package & checksums
         run: |
@@ -96,7 +97,8 @@ jobs:
           chmod +x out/MetaBrain out/metabrain-hook
           cp -r metabrain/web/. out/web/
           cp LICENSE README.md out/
-          (cd out && find . -type f | sed 's|^\./||' | sort | xargs shasum -a 256 > SHA256SUMS.txt)
+          (cd out && find . -type f ! -name 'SHA256SUMS.txt' | sed 's|^\./||' | sort | xargs shasum -a 256) > SHA256SUMS.txt
+          mv SHA256SUMS.txt out/SHA256SUMS.txt
           tar -czf MetaBrain-macos-arm64.tar.gz -C out .
       - name: Verify package & checksums
         run: |
