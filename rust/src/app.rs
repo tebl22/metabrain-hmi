@@ -545,6 +545,7 @@ pub(crate) fn expected_autostart_cmd(exe: &std::path::Path) -> String {
     format!("\"{clean}\" serve --no-browser")
 }
 
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn parse_autostart_exe(cmd: &str) -> &str {
     let t = cmd.trim();
     if let Some(rest) = t.strip_prefix('"') {
@@ -554,6 +555,7 @@ fn parse_autostart_exe(cmd: &str) -> &str {
     }
 }
 
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub(crate) fn compare_autostart(
     registered: Option<&str>,
     current_exe: &std::path::Path,
@@ -1132,11 +1134,20 @@ mod autostart_tests {
         ));
 
         let same =
-            r#""c:\users\alice\appdata\local\programs\metabrain\MetaBrain.exe" serve --no-browser"#;
+            r#""C:\Users\alice\AppData\Local\Programs\MetaBrain\metabrain.exe" serve --no-browser"#;
         assert!(matches!(
             compare_autostart(Some(same), exe),
             AutostartStatus::Synced { .. }
         ));
+
+        #[cfg(windows)]
+        {
+            let same_case = r#""c:\users\alice\appdata\local\programs\metabrain\MetaBrain.exe" serve --no-browser"#;
+            assert!(matches!(
+                compare_autostart(Some(same_case), exe),
+                AutostartStatus::Synced { .. }
+            ));
+        }
 
         let verbatim =
             Path::new(r"\\?\C:\Users\alice\AppData\Local\Programs\MetaBrain\metabrain.exe");
