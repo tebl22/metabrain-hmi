@@ -277,43 +277,51 @@ fn header(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap) {
         .collect();
     let any_avail = snap.chain.iter().any(|e| e.available);
     let line = if !any_avail {
-        "Ningún cerebro disponible: todos en pausa o sin cuota".to_string()
+        "No brain available: all paused or out of quota".to_string()
     } else {
         match masters.len() {
-            0 => "Ningún cerebro al mando".to_string(),
-            1 => format!("Manda {}", masters[0]),
-            _ => format!("Mandan juntos {}", masters.join(" y ")),
+            0 => "No brain in command".to_string(),
+            1 => format!("In command: {}", masters[0]),
+            _ => format!("Shared command: {}", masters.join(" & ")),
         }
     };
     let buttons = |app: &mut App, ui: &mut egui::Ui| {
-        if quiet(ui, "Pausar todo").clicked() {
+        if quiet(ui, "Pause all").clicked() {
             app.act(json!({"a": "pause_all"}));
-            app.say("Todos los cerebros en pausa", ATTN);
+            app.say("All brains paused", ATTN);
         }
-        if quiet(ui, "Reanudar todo").clicked() {
+        if quiet(ui, "Resume all").clicked() {
             app.act(json!({"a": "resume_all"}));
-            app.say("Todos los cerebros reanudados", RUN);
+            app.say("All brains resumed", RUN);
         }
     };
     if ui.available_width() < 560.0 {
-        ui.label(egui::RichText::new("Inicio").font(cond(26.0)).color(INK));
+        ui.label(
+            egui::RichText::new("Mission Control")
+                .font(cond(26.0))
+                .color(INK),
+        );
         ui.add(egui::Label::new(dim(line)).wrap());
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| buttons(app, ui));
     } else {
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new("Inicio").font(cond(26.0)).color(INK));
+                ui.label(
+                    egui::RichText::new("Mission Control")
+                        .font(cond(26.0))
+                        .color(INK),
+                );
                 ui.label(dim(line));
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if quiet(ui, "Reanudar todo").clicked() {
+                if quiet(ui, "Resume all").clicked() {
                     app.act(json!({"a": "resume_all"}));
-                    app.say("Todos los cerebros reanudados", RUN);
+                    app.say("All brains resumed", RUN);
                 }
-                if quiet(ui, "Pausar todo").clicked() {
+                if quiet(ui, "Pause all").clicked() {
                     app.act(json!({"a": "pause_all"}));
-                    app.say("Todos los cerebros en pausa", ATTN);
+                    app.say("All brains paused", ATTN);
                 }
             });
         });
@@ -332,15 +340,15 @@ pub(super) fn gauge_snap(b: &BrainSnap) -> (Option<f64>, &'static str, Option<f6
         .and_then(|x| x.amount)
         .is_some_and(|a| a <= 0.0)
     {
-        return (Some(100.0), "sin saldo", None);
+        return (Some(100.0), "no balance", None);
     }
     let mut best: Option<(f64, &'static str, Option<f64>)> = None;
     for q in &b.quota {
         if let Some(p) = q.pct {
             let label = match q.group.as_str() {
-                "session" => "sesión 5 h",
-                "weekly" => "semana",
-                _ => "cuota",
+                "session" => "5h session",
+                "weekly" => "weekly",
+                _ => "quota",
             };
             if best.map(|x| p > x.0).unwrap_or(true) {
                 best = Some((p, label, q.reset));
@@ -349,22 +357,22 @@ pub(super) fn gauge_snap(b: &BrainSnap) -> (Option<f64>, &'static str, Option<f6
     }
     if let Some(r) = b.effective.ratio.map(|r| r * 100.0) {
         if best.map(|x| r > x.0).unwrap_or(true) {
-            best = Some((r, "presupuesto del día", None));
+            best = Some((r, "daily budget", None));
         }
     }
     match best {
         // A share can't pass 100 %: going over the daily budget just means "full".
         Some((p, l, r)) if p >= 100.0 => (
             Some(100.0),
-            if l == "presupuesto del día" {
-                "presupuesto del día agotado"
+            if l == "daily budget" {
+                "daily budget reached"
             } else {
                 l
             },
             r,
         ),
         Some((p, l, r)) => (Some(p), l, r),
-        None => (None, "sin datos", None),
+        None => (None, "no data", None),
     }
 }
 
@@ -396,11 +404,11 @@ pub fn balance_text(b: &Value) -> Option<String> {
 
 pub(super) fn state_of_snap(b: &BrainSnap) -> (&'static str, Color32) {
     if b.state.paused || b.effective.paused {
-        ("en pausa", ATTN)
+        ("paused", ATTN)
     } else if b.active {
-        ("trabajando", RUN)
+        ("working", RUN)
     } else {
-        ("en espera", INK3)
+        ("standby", INK3)
     }
 }
 
@@ -427,9 +435,9 @@ pub(super) fn task_activity(task: &TaskSnap, convs: &Value) -> Option<(&'static 
         return None;
     }
     match task.status.as_str() {
-        "running" | "planning" | "synthesizing" => Some(("trabajando", RUN)),
-        "queued" => Some(("en cola", INFO)),
-        "verifying" => Some(("verificando", RUN)),
+        "running" | "planning" | "synthesizing" => Some(("working", RUN)),
+        "queued" => Some(("queued", INFO)),
+        "verifying" => Some(("verifying", RUN)),
         _ => None,
     }
 }

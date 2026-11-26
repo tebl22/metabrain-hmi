@@ -18,9 +18,9 @@ pub(super) fn alarms(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
     columns2(
         ui,
         |ui| {
-            section(ui, "Activas", Some(&list.len().to_string()));
+            section(ui, "Active", Some(&list.len().to_string()));
             if list.is_empty() {
-                empty(ui, "Ninguna alarma. Todo en orden.");
+                empty(ui, "No active alarms. All systems normal.");
             }
             for a in &list {
                 let c = level_color(&a.s("level"));
@@ -28,44 +28,44 @@ pub(super) fn alarms(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                     ui.set_width(ui.available_width());
                     ui.label(
                         egui::RichText::new(match a.s("level").as_str() {
-                            "alarm" => "Alarma",
-                            "warning" => "Aviso",
+                            "alarm" => "Alarm",
+                            "warning" => "Warning",
                             _ => "Info",
                         })
                         .font(medium(11.5))
                         .color(c),
                     );
-                    ui.label(egui::RichText::new(crate::l10n::es(&a.s("text"))).color(INK));
+                    ui.label(egui::RichText::new(a.s("text")).color(INK));
                     ui.horizontal(|ui| {
                         let brain = a.s("brain");
                         match a.s("code").as_str() {
                             "paused" => {
-                                if primary(ui, "Reanudar").clicked() {
+                                if primary(ui, "Resume").clicked() {
                                     acts.push(json!({"a": "resume", "brain": brain}));
                                 }
                             }
                             "readonly" => {
-                                if quiet(ui, "Quitar solo lectura").clicked() {
+                                if quiet(ui, "Disable read-only").clicked() {
                                     acts.push(json!({"a": "set", "brain": brain, "field": "readonly", "value": false}));
                                 }
                             }
                             "quota" => {
-                                if quiet(ui, "Ver uso").clicked() {
+                                if quiet(ui, "View usage").clicked() {
                                     go = Some(Page::Usage);
                                 }
                             }
                             "service_down" => {
-                                if quiet(ui, "Ver servicios").clicked() {
+                                if quiet(ui, "View services").clicked() {
                                     go = Some(Page::Services);
                                 }
                             }
                             "signin"
-                                if quiet(ui, "Ver diagnóstico").clicked() => {
+                                if quiet(ui, "View diagnostics").clicked() => {
                                     go = Some(Page::Settings);
                                 }
                             _ => {}
                         }
-                        if quiet(ui, "Ocultar 8 h").clicked() {
+                        if quiet(ui, "Snooze 8h").clicked() {
                             acts.push(json!({"a": "ack_alarm", "id": a.s("id"), "hours": 8}));
                         }
                     });
@@ -74,7 +74,7 @@ pub(super) fn alarms(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
             }
         },
         |ui| {
-            section(ui, "Registro", Some("avisos y alarmas recientes"));
+            section(ui, "Event Log", Some("recent warnings and alarms"));
             diary(ui, snap, true);
         },
     );
@@ -95,7 +95,7 @@ fn diary(ui: &mut egui::Ui, snap: &Value, only_important: bool) {
             .filter(|e| !only_important || e.s("level") != "info")
             .collect();
         if list.is_empty() {
-            ui.label(dim("Sin registros."));
+            ui.label(dim("No entries yet."));
         }
         for e in list.iter().rev().take(80) {
             ui.horizontal_top(|ui| {
@@ -130,14 +130,14 @@ pub(super) fn router(app: &mut App, ui: &mut egui::Ui) {
         ui.set_width(ui.available_width());
         section(
             ui,
-            "Probar",
-            Some("escribe una tarea y mira a quién la mandaría y por qué"),
+            "Test Routing",
+            Some("enter a task to preview which brain and model MetaBrain selects"),
         );
         let mut decide_now = false;
         if ui.available_width() < 540.0 {
             ui.add(
                 egui::TextEdit::singleline(&mut app.ui.rt_task)
-                    .hint_text("p. ej. renombra la variable x en utils.py")
+                    .hint_text("e.g. rename variable x in utils.rs")
                     .desired_width(ui.available_width()),
             );
             ui.horizontal(|ui| {
@@ -318,14 +318,14 @@ pub(super) fn memory(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
         |ui| {
             section(
                 ui,
-                "Archivos en uso",
-                Some("un cerebro los está editando; los demás esperan"),
+                "Files in Use",
+                Some("locked by an active brain; other brains wait"),
             );
             card(ui, None, |ui| {
                 ui.set_width(ui.available_width());
                 let locks = m.arr("locks");
                 if locks.is_empty() {
-                    ui.label(dim("Ningún archivo bloqueado."));
+                    ui.label(dim("No locked files."));
                 }
                 for l in locks {
                     let f = l.os("file").unwrap_or_else(|| l.s("path"));
@@ -343,17 +343,17 @@ pub(super) fn memory(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
             ui.add_space(12.0);
             section(
                 ui,
-                "Notas compartidas",
-                Some("lo que un cerebro dejó para los demás"),
+                "Shared Notes",
+                Some("context left by one brain for others"),
             );
             card(ui, None, |ui| {
                 ui.set_width(ui.available_width());
                 let rec = m.arr("recent");
                 if rec.is_empty() {
                     ui.label(dim(if m.is_null() {
-                        "Leyendo…"
+                        "Loading…"
                     } else {
-                        "Sin notas recientes."
+                        "No recent notes."
                     }));
                 }
                 for n in rec.iter().take(40) {
@@ -365,7 +365,7 @@ pub(super) fn memory(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                         );
                         let txt = n
                             .os("text")
-                            .unwrap_or_else(|| format!("editó {}", short_path(&n.s("file"))));
+                            .unwrap_or_else(|| format!("edited {}", short_path(&n.s("file"))));
                         ui.add(
                             egui::Label::new(egui::RichText::new(txt).font(body(12.5)).color(INK2))
                                 .wrap(),
@@ -375,14 +375,14 @@ pub(super) fn memory(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
             });
         },
         |ui| {
-            section(ui, "Diario", None);
+            section(ui, "Activity Log", None);
             diary(ui, snap, false);
         },
     );
 }
 
 // =====================================================================================
-// Servicios
+// Services
 // =====================================================================================
 
 pub(super) fn services(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
@@ -392,19 +392,19 @@ pub(super) fn services(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
     columns2(
         ui,
         |ui| {
-            section(ui, "Servicios", None);
+            section(ui, "Services", None);
             if svcs.is_empty() {
-                empty(ui, "No hay servicios configurados.");
+                empty(ui, "No background services configured.");
             }
             for s in &svcs {
                 let (st, c) = if s.b("running", false) {
                     if s.b("paused", false) {
-                        ("En pausa", ATTN)
+                        ("Paused", ATTN)
                     } else {
-                        ("Funcionando", RUN)
+                        ("Running", RUN)
                     }
                 } else {
-                    ("Detenido", ALARM)
+                    ("Stopped", ALARM)
                 };
                 card(ui, None, |ui| {
                     ui.set_width(ui.available_width());
@@ -414,28 +414,28 @@ pub(super) fn services(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let id = s.s("id");
                             if s.b("running", false) {
-                                if quiet(ui, "Detener").clicked() {
+                                if quiet(ui, "Stop").clicked() {
                                     acts.borrow_mut()
                                         .push(json!({"a": "svc_stop", "service": id}));
                                 }
                                 if s.b("can_pause", false) {
                                     let (a, l) = if s.b("paused", false) {
-                                        ("svc_resume", "Reanudar")
+                                        ("svc_resume", "Resume")
                                     } else {
-                                        ("svc_pause", "Pausar")
+                                        ("svc_pause", "Pause")
                                     };
                                     if quiet(ui, l).clicked() {
                                         acts.borrow_mut().push(json!({"a": a, "service": id}));
                                     }
                                 }
-                            } else if primary(ui, "Iniciar").clicked() {
+                            } else if primary(ui, "Start").clicked() {
                                 acts.borrow_mut()
                                     .push(json!({"a": "svc_start", "service": id}));
                             }
                         });
                     });
                     if let Some(ts) = s.f("heartbeat_ts") {
-                        ui.label(faint(format!("último latido {}", ago(now(), ts))));
+                        ui.label(faint(format!("last heartbeat {}", ago(now(), ts))));
                     }
                     let hb = s.s("heartbeat");
                     if !hb.is_empty() {
@@ -453,7 +453,7 @@ pub(super) fn services(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
             }
         },
         |ui| {
-            section(ui, "Máquina", None);
+            section(ui, "Host Machine", None);
             card(ui, None, |ui| {
                 ui.set_width(ui.available_width());
                 for (l, v) in [("CPU", m.f("cpu")), ("RAM", m.f("ram"))] {
@@ -461,7 +461,7 @@ pub(super) fn services(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                         ui.label(dim(l));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
-                                egui::RichText::new(format!("{:.0} %", v.unwrap_or(0.0)))
+                                egui::RichText::new(format!("{:.0}%", v.unwrap_or(0.0)))
                                     .font(mono(12.0))
                                     .color(INK2),
                             );
@@ -485,7 +485,7 @@ pub(super) fn services(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                 if !heavy.is_empty() {
                     ui.add_space(8.0);
                     ui.label(
-                        egui::RichText::new("Procesos pesados")
+                        egui::RichText::new("Heavy Processes")
                             .font(cond(14.0))
                             .color(INK),
                     );
@@ -493,7 +493,7 @@ pub(super) fn services(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new(format!("{} · PID {:.0} · {:.0} MB", h.s("kind"), h.f("pid").unwrap_or(0.0), h.f("mb").unwrap_or(0.0))).font(body(12.5)).color(INK2));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if danger(ui, "Cerrar").clicked() {
+                                if danger(ui, "Kill").clicked() {
                                     acts.borrow_mut().push(json!({"a": "kill", "pid": h.get("pid").cloned().unwrap_or(Value::Null)}));
                                 }
                             });
@@ -509,7 +509,7 @@ pub(super) fn services(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
 }
 
 // =====================================================================================
-// Agentes
+// Agents
 // =====================================================================================
 
 pub(super) fn agents(_app: &mut App, ui: &mut egui::Ui, snap: &Value) {
@@ -534,7 +534,7 @@ pub(super) fn agents(_app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                 ui.label(faint(b.s("status")));
             });
             if sess.is_empty() && subs.is_empty() && jobs.is_empty() {
-                ui.label(dim("Sin actividad en las últimas 3 horas."));
+                ui.label(dim("No activity in the last 3 hours."));
             }
             for s in &sess {
                 ui.horizontal(|ui| {
@@ -575,7 +575,7 @@ pub(super) fn agents(_app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(format!(
-                                "delegado a {}: {}",
+                                "delegated to {}: {}",
                                 j.s("to"),
                                 j.s("task").chars().take(90).collect::<String>()
                             ))
@@ -610,13 +610,13 @@ fn sub_row(ui: &mut egui::Ui, x: &Value) {
 }
 
 // =====================================================================================
-// Extensiones
+// Extensions
 // =====================================================================================
 
 pub(super) fn extensions(app: &mut App, ui: &mut egui::Ui) {
     let list = app.get("api/extensions", 30.0);
     if list.is_null() {
-        empty(ui, "Leyendo extensiones…");
+        empty(ui, "Loading extensions…");
         return;
     }
     let mut remove: Option<Value> = None;
@@ -632,7 +632,7 @@ pub(super) fn extensions(app: &mut App, ui: &mut egui::Ui) {
                 ui,
                 |ui| {
                     ui.label(
-                        egui::RichText::new(format!("Servidores MCP ({})", b.arr("mcp").len()))
+                        egui::RichText::new(format!("MCP Servers ({})", b.arr("mcp").len()))
                             .font(cond(13.5))
                             .color(INK2),
                     );
@@ -641,14 +641,14 @@ pub(super) fn extensions(app: &mut App, ui: &mut egui::Ui) {
                             ui.label(egui::RichText::new(m.s("name")).font(mono(12.0)).color(INK));
                             ui.label(faint(m.s("scope")));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if icon_button(ui, Icon::Close, "Quitar este MCP", false, true).clicked() {
+                                if icon_button(ui, Icon::Close, "Remove this MCP server", false, true).clicked() {
                                     remove = Some(json!({"brain": b.s("brain"), "op": "remove_mcp", "name": m.s("name"), "scope": m.s("scope")}));
                                 }
                             });
                         });
                     }
                     if b.arr("mcp").is_empty() {
-                        ui.label(faint("Ninguno"));
+                        ui.label(faint("None"));
                     }
                 },
                 |ui| {
@@ -669,7 +669,7 @@ pub(super) fn extensions(app: &mut App, ui: &mut egui::Ui) {
                         });
                     }
                     if b.arr("skills").is_empty() {
-                        ui.label(faint("Ninguna"));
+                        ui.label(faint("None"));
                     }
                 },
             );
@@ -684,7 +684,7 @@ pub(super) fn extensions(app: &mut App, ui: &mut egui::Ui) {
 }
 
 // =====================================================================================
-// Ajustes
+// Settings
 // =====================================================================================
 
 pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
@@ -693,12 +693,13 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
     let mut edits: Vec<ConfigEdit> = vec![];
     let mut acts: Vec<Value> = vec![];
     let mut install_hooks = false;
+    let mut uninstall_hooks = false;
 
     let mut sync_autostart = false;
     set_section(
         ui,
-        "Acerca de",
-        "Versión, ejecutable activo y arranque automático",
+        "About",
+        "Version, active binary, and login autostart",
         |ui| {
             ui.label(
                 egui::RichText::new(format!("MetaBrain v{}", env!("CARGO_PKG_VERSION")))
@@ -715,7 +716,7 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                         )
                         .selectable(true),
                     );
-                    if quiet(ui, "Abrir carpeta").clicked() {
+                    if quiet(ui, "Open folder").clicked() {
                         if let Some(dir) = path.parent() {
                             crate::app::open_browser(&dir.display().to_string());
                         }
@@ -730,27 +731,27 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                 .clone();
             ui.horizontal_wrapped(|ui| match &status {
                 crate::app::AutostartStatus::Synced { .. } => {
-                    chip(ui, "Arranque sincronizado", RUN);
+                    chip(ui, "Autostart synced", RUN);
                 }
                 crate::app::AutostartStatus::Mismatch { registered, .. } => {
-                    chip(ui, "Arranque desactualizado", ATTN);
-                    if primary(ui, "Sincronizar arranque").clicked() {
+                    chip(ui, "Autostart outdated", ATTN);
+                    if primary(ui, "Sync autostart").clicked() {
                         sync_autostart = true;
                     }
-                    ui.label(faint(format!("Apunta a: {registered}")));
+                    ui.label(faint(format!("Points to: {registered}")));
                 }
                 crate::app::AutostartStatus::Missing { .. } => {
-                    chip(ui, "Arranque desactivado", INK3);
-                    if quiet(ui, "Sincronizar arranque").clicked() {
+                    chip(ui, "Autostart disabled", INK3);
+                    if quiet(ui, "Enable autostart").clicked() {
                         sync_autostart = true;
                     }
                 }
                 crate::app::AutostartStatus::Error(e) => {
-                    chip(ui, "No se pudo leer el arranque", ALARM);
+                    chip(ui, "Could not read autostart", ALARM);
                     ui.label(faint(e));
                 }
                 crate::app::AutostartStatus::Unsupported => {
-                    ui.label(faint("Arranque automático disponible en Windows"));
+                    ui.label(faint("Autostart not supported on this platform"));
                 }
             });
         },
@@ -759,9 +760,9 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
         match crate::app::set_autostart(true) {
             Ok(()) => {
                 app.ui.autostart = Some(crate::app::autostart_status());
-                app.say("Arranque automático sincronizado", RUN);
+                app.say("Autostart synced", RUN);
             }
-            Err(e) => app.say(format!("No se pudo sincronizar el arranque: {e}"), ALARM),
+            Err(e) => app.say(format!("Failed to sync autostart: {e}"), ALARM),
         }
     }
 
@@ -863,9 +864,17 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
             if doc.is_null() {
                 ui.label(dim("Checking…"));
             }
-            if quiet(ui, "Install Claude Code hooks").clicked() {
-                install_hooks = true;
-            }
+            ui.horizontal_wrapped(|ui| {
+                if quiet(ui, "Install Claude Code hooks").clicked() {
+                    install_hooks = true;
+                }
+                if quiet(ui, "Uninstall hooks")
+                    .on_hover_text("Remove only MetaBrain hooks from Claude Code settings.json while preserving your own hooks")
+                    .clicked()
+                {
+                    uninstall_hooks = true;
+                }
+            });
         },
     );
 
@@ -879,8 +888,8 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
     let mut s = s0;
     set_section(
         ui,
-        "Account Failover & Succession",
-        "When a brain steps down and the next tier takes command. Order hierarchy on Home.",
+        "Cross-Provider Failover & Continuity",
+        "When a brain hands off to the next provider tier. Order priority on Mission Control.",
         |ui| {
             row(
                 ui,
@@ -920,7 +929,7 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
             );
             row(
                 ui,
-                "Pre-emptive account switch at",
+                "Pre-emptive handoff at",
                 "Headroom margin before quota exhaustion",
                 |ui| {
                     let saved = c.f("failover_pct").unwrap_or(85.0);
@@ -1248,6 +1257,18 @@ pub(super) fn settings(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
             )
         });
     }
+    if uninstall_hooks {
+        app.post("api/hooks/uninstall", json!({}), |r| {
+            (
+                r.arr("result")
+                    .iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(". "),
+                INFO,
+            )
+        });
+    }
     for a in acts {
         app.act(a);
         app.say("Saved", RUN);
@@ -1465,10 +1486,10 @@ pub fn approvals_overlay(app: &mut App, ctx: &egui::Context) {
                                 );
                                 meter(ui, Some(1.0 - left / wait_s.max(1.0)), ui.available_width());
                                 ui.horizontal(|ui| {
-                                    if primary(ui, "Permitir").clicked() {
+                                    if primary(ui, "Allow").clicked() {
                                         decide = Some((r.s("id"), true));
                                     }
-                                    if danger(ui, "Denegar").clicked() {
+                                    if danger(ui, "Deny").clicked() {
                                         decide = Some((r.s("id"), false));
                                     }
                                 });
@@ -1476,31 +1497,31 @@ pub fn approvals_overlay(app: &mut App, ctx: &egui::Context) {
                         ui.add_space(6.0);
                     }
                     if pending.len() > 3 {
-                        ui.label(faint(format!("y {} más", pending.len() - 3)));
+                        ui.label(faint(format!("and {} more", pending.len() - 3)));
                     }
                 });
         });
 
     if let Some((id, allow)) = decide {
         app.ui.decided.insert(id.clone());
-        if crate::approvals::decide(&id, allow, "ventana") {
+        if crate::approvals::decide(&id, allow, "window") {
             let rec = crate::approvals::get(&id).unwrap_or(Value::Null);
             app.sup.diary.add(
-                "Tú",
+                "You",
                 &format!(
                     "{} {}: {}",
-                    if allow { "permitiste a" } else { "denegaste a" },
+                    if allow { "allowed" } else { "denied" },
                     rec.s("brain_name"),
                     rec.s("tool")
                 ),
                 "info",
             );
             app.say(
-                if allow { "Permitido" } else { "Denegado" },
+                if allow { "Allowed" } else { "Denied" },
                 if allow { RUN } else { ALARM },
             );
         } else {
-            app.say("Ya se respondió en la terminal o expiró", ATTN);
+            app.say("Already answered in terminal or expired", ATTN);
         }
     }
     ctx.request_repaint_after(std::time::Duration::from_millis(500));

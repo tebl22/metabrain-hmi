@@ -65,8 +65,8 @@ pub(super) fn hierarchy(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap) {
     let lv = levels(&snap.chain);
     section(
         ui,
-        "Jerarquía de mando",
-        Some("suelta sobre otro cerebro para intercambiarlos, en el espacio libre de un nivel para una mesa redonda, o entre niveles para darle uno propio"),
+        "Command Hierarchy",
+        Some("drag onto another brain to swap priority, into a shared tier for round-table execution, or between tiers for a dedicated level"),
     );
     let colors: HashMap<&str, Color32> = snap
         .brains
@@ -212,20 +212,20 @@ pub(super) fn hierarchy(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap) {
         p.text(
             Pos2::new(lr.min.x + 16.0, lr.center().y - 8.0),
             egui::Align2::LEFT_CENTER,
-            format!("Nivel {}", li + 1),
+            format!("Tier {}", li + 1),
             cond(15.0),
             if commanding { MASTER } else { INK2 },
         );
         let sub = if commanding {
             if lv.get(li).is_some_and(|l| l.len() > 1) {
-                "mesa redonda: mandan juntos"
+                "round table: shared command"
             } else {
-                "al mando"
+                "in command"
             }
         } else if li == 0 {
-            "primero"
+            "primary"
         } else {
-            "respaldo"
+            "backup"
         };
         p.text(
             Pos2::new(lr.min.x + 16.0, lr.center().y + 10.0),
@@ -238,7 +238,7 @@ pub(super) fn hierarchy(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap) {
             p.text(
                 Pos2::new(lr.max.x - 16.0, lr.center().y),
                 egui::Align2::RIGHT_CENTER,
-                "mesa redonda: mandan juntos",
+                "round table: shared command",
                 medium(11.0),
                 MASTER,
             );
@@ -277,7 +277,7 @@ pub(super) fn hierarchy(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap) {
         p.text(
             Pos2::new(rect.max.x - 12.0, y - 9.0),
             egui::Align2::RIGHT_CENTER,
-            "nivel propio aquí",
+            "dedicated tier here",
             medium(11.0),
             MASTER,
         );
@@ -358,7 +358,7 @@ pub(super) fn hierarchy(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap) {
             bold(13.0),
             if e.available { INK } else { INK2 },
         );
-        let reason = crate::l10n::es(&e.reason);
+        let reason = &e.reason;
         tp.text(
             Pos2::new(br.min.x + 14.0, br.min.y + 36.0),
             egui::Align2::LEFT_CENTER,
@@ -448,7 +448,7 @@ pub(super) fn hierarchy(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap) {
                 };
                 if shape(&v) != shape(&lv) {
                     send(app, &v);
-                    app.say("Jerarquía guardada", MASTER);
+                    app.say("Hierarchy saved", MASTER);
                 }
             }
         }

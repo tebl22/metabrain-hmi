@@ -1,5 +1,5 @@
 use super::policy::is_readonly_command;
-use super::{_config, install, resolve_brain, run_hook};
+use super::{_config, install, resolve_brain, run_hook, uninstall};
 use crate::util::{read_json, write_json};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -373,6 +373,25 @@ fn install_replaces_legacy_and_is_idempotent() {
     .collect();
     assert_eq!(keys, want);
     assert!(cfgdir.join("settings.json.metabrain.bak").exists());
+
+    // Uninstall removes only MetaBrain hooks and preserves user hooks and settings.
+    let dry = uninstall(&cfg, true);
+    assert!(dry.iter().any(|m| m.contains("would remove hooks from")));
+    let rem = uninstall(&cfg, false);
+    assert!(rem.iter().any(|m| m.contains("hooks removed from")));
+    let after = read_json(&cfgdir.join("settings.json")).expect("after uninstall");
+    assert_eq!(after.get("model").and_then(|v| v.as_str()), Some("x"));
+    let pre_after = after
+        .get("hooks")
+        .and_then(|h| h.get("PreToolUse"))
+        .and_then(|v| v.as_array())
+        .expect("user PreToolUse hook preserved");
+    assert_eq!(pre_after.len(), 1);
+    assert_eq!(
+        pre_after[0]["hooks"][0]["command"].as_str(),
+        Some("mine.sh")
+    );
+    assert!(after["hooks"].get("SessionStart").is_none());
 
     // BOM is tolerated; broken JSON is left untouched.
     fs::write(

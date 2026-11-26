@@ -581,7 +581,7 @@ impl Supervisor {
             "masters": masters,
             "version": env!("CARGO_PKG_VERSION"),
         });
-        if self.cfg.key("lang").as_str() != Some("en") {
+        if self.cfg.key("lang").as_str() == Some("es") {
             crate::l10n::snapshot_es(&mut snap);
         }
         snap

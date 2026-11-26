@@ -11,16 +11,18 @@ use crate::util::{data_dir, expand, expand_s, http_json, norm, now, read_json, t
 const EXIT_PAUSED: i32 = 75;
 const DEFAULT_PORT: u16 = 8790;
 
-const HELP: &str = "MetaBrain
+const HELP: &str = "MetaBrain — Mission Control for AI Coding Agents
 
-  metabrain serve [--port N] [--lan] [--no-browser] [--no-tray]
+  metabrain serve [--demo] [--port N] [--lan] [--no-browser] [--no-tray] [--no-window]
+  metabrain doctor [--json]
   metabrain mcp
   metabrain hook <event>
   metabrain hooks install [--dry-run]
+  metabrain hooks uninstall [--dry-run]
   metabrain note <brain> \"text\" [file ...]
   metabrain run <brain> -- cmd ...
   metabrain autostart on|off
-  metabrain route [--project P] [--level N] <tarea>
+  metabrain route [--project P] [--level N] <task>
   metabrain outcome --project P --level N --candidate C ok|fail [--tokens T]
   metabrain version
 ";
@@ -207,6 +209,8 @@ struct ServeOpts {
     lan: bool,
     /// Also open the web panel (phone / LAN use); the desktop uses the native window.
     web: bool,
+    /// Run in zero-credential interactive demo sandbox mode.
+    demo: bool,
 }
 
 fn parse_serve_args(argv: &[String]) -> ServeOpts {
@@ -216,6 +220,7 @@ fn parse_serve_args(argv: &[String]) -> ServeOpts {
         tray: true,
         lan: false,
         web: false,
+        demo: false,
     };
     let mut i = 0;
     while i < argv.len() {
@@ -233,6 +238,7 @@ fn parse_serve_args(argv: &[String]) -> ServeOpts {
             "--no-browser" => o.browser = false,
             "--no-tray" | "--no-window" => o.tray = false,
             "--web" => o.web = true,
+            "--demo" => o.demo = true,
             _ => {}
         }
         i += 1;
@@ -280,6 +286,42 @@ fn hooks_install(rest: &[String]) -> i32 {
     let lines = crate::hooks::install(&cfg, exe.to_string_lossy().as_ref(), dry);
     for line in &lines {
         emit(line);
+    }
+    0
+}
+
+fn hooks_uninstall(rest: &[String]) -> i32 {
+    let dry = rest.iter().any(|a| a == "--dry-run");
+    let cfg = read_json(&data_dir().join("metabrain.json")).unwrap_or_else(|| json!({}));
+    let lines = crate::hooks::uninstall(&cfg, dry);
+    for line in &lines {
+        emit(line);
+    }
+    0
+}
+
+fn doctor_cmd(rest: &[String]) -> i32 {
+    let as_json = rest.iter().any(|a| a == "--json");
+    let cfg = read_json(&data_dir().join("metabrain.json")).unwrap_or_else(|| json!({}));
+    let report = crate::insights::doctor(&cfg);
+    if as_json {
+        emit(&serde_json::to_string_pretty(&report).unwrap_or_default());
+        return 0;
+    }
+    emit(&format!(
+        "MetaBrain {} — Diagnostic Report",
+        env!("CARGO_PKG_VERSION")
+    ));
+    emit(&format!("Data dir: {}", data_dir().display()));
+    for item in report.arr("items") {
+        let icon = if item.b("ok", false) { "[OK]" } else { "[!!]" };
+        let label = item.s("label");
+        let detail = item.s("detail");
+        if detail.is_empty() {
+            emit(&format!("  {icon} {label}"));
+        } else {
+            emit(&format!("  {icon} {label} — {detail}"));
+        }
     }
     0
 }
@@ -411,23 +453,74 @@ fn run_job(bid: &str, cmd: &[String]) -> i32 {
 }
 
 fn autostart(on: bool) -> i32 {
-    if !cfg!(windows) {
-        emit("autostart is only automatic on Windows");
+    if let Err(e) = set_autostart(on) {
+        emit_err(&format!("autostart: {e}"));
         return 1;
-    }
-    #[cfg(windows)]
-    {
-        if let Err(e) = set_autostart(on) {
-            emit_err(&format!("autostart: {e}"));
-            return 1;
-        }
     }
     emit(&format!("autostart {}", if on { "on" } else { "off" }));
     0
 }
 
+#[cfg(windows)]
 const RUN_SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+#[cfg(windows)]
 const RUN_VALUE: &str = "MetaBrain";
+
+#[cfg(target_os = "macos")]
+fn macos_plist_path() -> PathBuf {
+    crate::util::home()
+        .join("Library")
+        .join("LaunchAgents")
+        .join("dev.metabrain.agent.plist")
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_plist_xml(exe: &std::path::Path) -> String {
+    let clean = exe
+        .to_string_lossy()
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+         <plist version=\"1.0\">\n\
+         <dict>\n\
+           <key>Label</key><string>dev.metabrain.agent</string>\n\
+           <key>ProgramArguments</key>\n\
+           <array>\n\
+             <string>{clean}</string>\n\
+             <string>serve</string>\n\
+             <string>--no-browser</string>\n\
+           </array>\n\
+           <key>RunAtLoad</key><true/>\n\
+         </dict>\n\
+         </plist>\n"
+    )
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn linux_desktop_path() -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| crate::util::home().join(".config"))
+        .join("autostart")
+        .join("metabrain.desktop")
+}
+
+#[cfg(any(all(unix, not(target_os = "macos")), test))]
+fn linux_desktop_entry(exe: &std::path::Path) -> String {
+    let cmd = expected_autostart_cmd(exe);
+    format!(
+        "[Desktop Entry]\n\
+         Type=Application\n\
+         Name=MetaBrain\n\
+         Comment=Mission Control for AI Coding Agents\n\
+         Exec={cmd}\n\
+         Terminal=false\n\
+         X-GNOME-Autostart-enabled=true\n"
+    )
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AutostartStatus {
@@ -442,7 +535,7 @@ pub(crate) enum AutostartStatus {
         expected: String,
     },
     Error(String),
-    #[cfg_attr(windows, allow(dead_code))]
+    #[allow(dead_code)]
     Unsupported,
 }
 
@@ -507,9 +600,51 @@ pub(crate) fn autostart_status() -> AutostartStatus {
             Err(e) => AutostartStatus::Error(e.to_string()),
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        AutostartStatus::Unsupported
+        let exe = match std::env::current_exe() {
+            Ok(p) => p,
+            Err(e) => return AutostartStatus::Error(e.to_string()),
+        };
+        let plist = macos_plist_path();
+        match std::fs::read_to_string(&plist) {
+            Ok(body) => {
+                let target = exe.to_string_lossy();
+                if body.contains(target.as_ref()) {
+                    AutostartStatus::Synced {
+                        command: plist.display().to_string(),
+                    }
+                } else {
+                    AutostartStatus::Mismatch {
+                        registered: plist.display().to_string(),
+                        expected: expected_autostart_cmd(&exe),
+                    }
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => AutostartStatus::Missing {
+                expected: expected_autostart_cmd(&exe),
+            },
+            Err(e) => AutostartStatus::Error(e.to_string()),
+        }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let exe = match std::env::current_exe() {
+            Ok(p) => p,
+            Err(e) => return AutostartStatus::Error(e.to_string()),
+        };
+        let desktop = linux_desktop_path();
+        match std::fs::read_to_string(&desktop) {
+            Ok(body) => {
+                let exec_line = body
+                    .lines()
+                    .find_map(|l| l.strip_prefix("Exec="))
+                    .map(str::trim);
+                compare_autostart(exec_line, &exe)
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => compare_autostart(None, &exe),
+            Err(e) => AutostartStatus::Error(e.to_string()),
+        }
     }
 }
 
@@ -532,12 +667,40 @@ pub(crate) fn set_autostart(on: bool) -> std::io::Result<()> {
     }
 }
 
-#[cfg(not(windows))]
-pub(crate) fn set_autostart(_on: bool) -> std::io::Result<()> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "autostart is only automatic on Windows",
-    ))
+#[cfg(target_os = "macos")]
+pub(crate) fn set_autostart(on: bool) -> std::io::Result<()> {
+    let plist = macos_plist_path();
+    if on {
+        let exe = std::env::current_exe()?;
+        if let Some(parent) = plist.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&plist, macos_plist_xml(&exe))
+    } else {
+        match std::fs::remove_file(&plist) {
+            Ok(()) => Ok(()),
+            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+pub(crate) fn set_autostart(on: bool) -> std::io::Result<()> {
+    let desktop = linux_desktop_path();
+    if on {
+        let exe = std::env::current_exe()?;
+        if let Some(parent) = desktop.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&desktop, linux_desktop_entry(&exe))
+    } else {
+        match std::fs::remove_file(&desktop) {
+            Ok(()) => Ok(()),
+            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
 }
 
 pub(crate) fn open_browser(url: &str) {
@@ -548,7 +711,13 @@ pub(crate) fn open_browser(url: &str) {
         crate::util::hidden(&mut c);
         let _ = c.spawn();
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let mut c = std::process::Command::new("open");
+        c.arg(url);
+        let _ = c.spawn();
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let mut c = std::process::Command::new("xdg-open");
         c.arg(url);
@@ -558,6 +727,9 @@ pub(crate) fn open_browser(url: &str) {
 
 fn serve(argv: &[String]) -> i32 {
     let o = parse_serve_args(argv);
+    if o.demo {
+        std::env::set_var("METABRAIN_DEMO", "1");
+    }
     let cfg_path = data_dir().join("metabrain.json");
     let port_num = o
         .port
@@ -661,6 +833,10 @@ pub fn main_with(args: Vec<String>, console: bool) -> i32 {
     match cmd.as_str() {
         "hook" => run_hook_cmd(rest.first().map(|s| s.as_str())),
         "hooks" if rest.first().map(|s| s.as_str()) == Some("install") => hooks_install(&rest[1..]),
+        "hooks" if rest.first().map(|s| s.as_str()) == Some("uninstall") => {
+            hooks_uninstall(&rest[1..])
+        }
+        "doctor" => doctor_cmd(rest),
         "note" if args.len() >= 3 => note(&args[1], &args[2], &args[3..]),
         "run" if args.len() >= 3 => {
             let mut r: &[String] = &args[2..];
@@ -702,11 +878,24 @@ mod tests {
             "9001".to_string(),
             "--no-browser".to_string(),
             "--lan".to_string(),
+            "--demo".to_string(),
         ]);
         assert_eq!(o.port, Some(9001));
         assert!(!o.browser);
         assert!(o.tray);
         assert!(o.lan);
+        assert!(o.demo);
+    }
+
+    #[test]
+    fn cross_platform_autostart_templates_are_valid() {
+        let exe = std::path::Path::new("/usr/local/bin/MetaBrain");
+        let plist = macos_plist_xml(exe);
+        assert!(plist.contains("<string>/usr/local/bin/MetaBrain</string>"));
+        assert!(plist.contains("<string>--no-browser</string>"));
+        let desktop = linux_desktop_entry(exe);
+        assert!(desktop.contains("[Desktop Entry]"));
+        assert!(desktop.contains("Exec=\"/usr/local/bin/MetaBrain\" serve --no-browser"));
     }
 
     #[test]

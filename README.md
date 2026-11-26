@@ -1,8 +1,28 @@
-# MetaBrain HMI
+<p align="center">
+  <img src="docs/brand/board.png" alt="MetaBrain HMI — Supervisory control for many minds" width="100%" />
+</p>
 
-> **English** · [Español](README.es.md)
+<h1 align="center">MetaBrain HMI</h1>
 
-**Supervisory control and multi-brain orchestration for AI coding agents — built in 100% pure Rust.**
+<p align="center">
+  <strong>Supervisory control and multi-brain orchestration for AI coding agents — built in 100% pure Rust.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/tebl22/metabrain-hmi/actions/workflows/rust.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/tebl22/metabrain-hmi/rust.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI&color=3BE3A6" /></a>
+  <a href="https://github.com/tebl22/metabrain-hmi/releases"><img alt="Release" src="https://img.shields.io/github/v/release/tebl22/metabrain-hmi?style=flat-square&color=FFB547" /></a>
+  <img alt="100% Pure Rust" src="https://img.shields.io/badge/Rust-100%25%20Pure-dea584?style=flat-square&logo=rust&logoColor=white" />
+  <img alt="Platforms" src="https://img.shields.io/badge/OS-Windows%20%7C%20macOS%20%7C%20Linux-2B333A?style=flat-square" />
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-3BE3A6?style=flat-square" /></a>
+</p>
+
+<p align="center">
+  <strong>English</strong> · <a href="README.es.md">Español</a> · <a href="#try-instantly-with-zero-credentials---demo">Try <code>--demo</code></a> · <a href="SECURITY.md">Security</a> · <a href="CHANGELOG.md">Changelog</a>
+</p>
+
+<p align="center">
+  <img src="docs/media/metabrain-demo.gif" alt="MetaBrain HMI orbital control room, automatic failover, and parallel DAG orchestration demo" width="100%" />
+</p>
 
 MetaBrain runs locally on your machine as a single native desktop application (`egui` / `eframe`) with a tray supervisor, an API metering proxy, Claude Code hooks, an adaptive cost-aware router, a parallel DAG orchestrator, an MCP server, and a minimalist read-only LAN monitor for mobile devices.
 
@@ -36,9 +56,20 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting and threat-model deta
 
 ## Quick Start
 
+### Try Instantly with Zero Credentials (`--demo`)
+
+Want to explore the HMI, orbital brain map, quota rings, parallel DAG monitor, and settings without configuring any API keys or CLIs?
+
+```bash
+./target/release/MetaBrain serve --demo
+```
+
+`--demo` launches MetaBrain against an isolated temporary sandbox preloaded with realistic simulated accounts, quotas, and metrics — your real `~/.metabrain` / `%APPDATA%\MetaBrain` config is never touched.
+
 ### Prerequisites
+- **OS:** Windows, macOS, or Linux (x86_64 / arm64)
 - [Rust toolchain](https://rustup.rs/) (stable, Edition 2021)
-- At least one AI CLI or API key (e.g., Claude Code, Codex CLI, Antigravity CLI, DeepSeek, OpenAI, Anthropic, or Ollama)
+- At least one AI CLI or API key for live mode (e.g., Claude Code, Codex CLI, Antigravity CLI, DeepSeek, OpenAI, Anthropic, or Ollama) — or none for `--demo`
 
 ### Build & Run from Source
 
@@ -58,11 +89,21 @@ Run directly:
 ```
 
 Optional flags:
+- `--demo` — run in an isolated sandbox with simulated brains, quotas, and tasks (zero credentials required)
 - `--lan` — bind the read-only PIN-protected mobile monitor to `0.0.0.0` (HTTP without TLS; use only on trusted local networks)
 - `--port <N>` — override the listening port (default `8790`)
 - `--no-tray` — run without the system tray icon
 - `--no-window` / `--web` — run headless (server only, without opening the native desktop window)
 - `--no-browser` — do not automatically open a browser tab on startup
+
+### Install on macOS & Linux
+
+```bash
+./install.sh                   # build from source and install into ~/.local/bin
+./install.sh --with-hooks      # also install Claude Code hooks
+./install.sh --with-autostart  # also enable login autostart (LaunchAgent / XDG)
+./install.sh --uninstall       # cleanly remove binaries, MetaBrain hooks, and autostart
+```
 
 ### Install on Windows
 
@@ -71,6 +112,17 @@ powershell -ExecutionPolicy Bypass -File .\instalar_rust.ps1
 ```
 
 The installer uses atomic staging, verifies the new process PID on `/api/health`, automatically rolls back on failure, preserves your `%APPDATA%\MetaBrain` data, and installs Claude Code hooks + Windows autostart.
+
+### Clean Hook Management
+
+MetaBrain installs hooks into `~/.claude/settings.json` non-destructively and can cleanly remove **only its own entries** without touching your custom hooks:
+
+```bash
+metabrain-hook hooks install [--dry-run]
+metabrain-hook hooks uninstall [--dry-run]
+```
+
+You can also install or uninstall hooks directly from **Settings → Diagnostics** in the desktop app.
 
 ---
 

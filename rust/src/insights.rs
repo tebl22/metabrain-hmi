@@ -885,7 +885,20 @@ pub fn notify_with(title: &str, body: &str, view: &str) {
     {
         windows_toast(title, body, view);
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let script = "on run argv\n\
+            display notification (item 2 of argv) with title (item 1 of argv)\n\
+        end run";
+        let spawned = std::process::Command::new("osascript")
+            .args(["-e", script, "--", title, body])
+            .spawn()
+            .is_ok();
+        if !spawned {
+            log(&format!("notify: {} — {}", title, body));
+        }
+    }
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     {
         let spawned = std::process::Command::new("notify-send")
             .arg("--")

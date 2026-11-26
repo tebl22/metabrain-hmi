@@ -1,13 +1,13 @@
 name: rust-ci
 
-# Builds, verifies, and packages MetaBrain (100% Rust, zero Python).
+# Builds, verifies, packages, and attests MetaBrain across Linux, macOS, and Windows (100% pure Rust).
 on:
   push:
     branches: [main]
     tags: ["v*"]
   pull_request:
     branches: [main]
-    paths: ["rust/**", "metabrain/web/**", "build/**", ".github/workflows/rust.yml"]
+    paths: ["rust/**", "metabrain/web/**", "build/**", "install.sh", ".github/workflows/rust.yml"]
   workflow_dispatch:
 
 permissions:
@@ -36,6 +36,81 @@ jobs:
       - name: Integration & contract tests
         working-directory: rust
         run: cargo test --tests --locked
+      - name: Build release
+        working-directory: rust
+        run: cargo build --release --locked
+      - name: Package
+        run: |
+          set -euo pipefail
+          mkdir -p out/web
+          cp rust/target/release/MetaBrain rust/target/release/metabrain-hook out/
+          chmod +x out/MetaBrain out/metabrain-hook
+          cp -r metabrain/web/. out/web/
+          cp LICENSE README.md out/
+          (cd out && find . -type f | sed 's|^\./||' | sort | xargs sha256sum > SHA256SUMS.txt)
+          tar -czf MetaBrain-linux-x64.tar.gz -C out .
+      - name: Verify package & checksums
+        run: |
+          set -euo pipefail
+          mkdir -p verify_out
+          tar -xzf MetaBrain-linux-x64.tar.gz -C verify_out
+          for req in MetaBrain metabrain-hook SHA256SUMS.txt web/index.html web/app.js web/style.css; do
+            test -f "verify_out/$req" || { echo "Missing required asset: $req"; exit 1; }
+          done
+          (cd verify_out && sha256sum -c SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MetaBrain-linux-x64
+          path: MetaBrain-linux-x64.tar.gz
+
+  macos:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: "clippy,rustfmt" }
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: rust }
+      - name: Format check
+        working-directory: rust
+        run: cargo fmt --check
+      - name: Clippy
+        working-directory: rust
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Unit tests
+        working-directory: rust
+        run: cargo test --lib --locked -- --test-threads=1
+      - name: Integration & contract tests
+        working-directory: rust
+        run: cargo test --tests --locked
+      - name: Build release
+        working-directory: rust
+        run: cargo build --release --locked
+      - name: Package
+        run: |
+          set -euo pipefail
+          mkdir -p out/web
+          cp rust/target/release/MetaBrain rust/target/release/metabrain-hook out/
+          chmod +x out/MetaBrain out/metabrain-hook
+          cp -r metabrain/web/. out/web/
+          cp LICENSE README.md out/
+          (cd out && find . -type f | sed 's|^\./||' | sort | xargs shasum -a 256 > SHA256SUMS.txt)
+          tar -czf MetaBrain-macos-arm64.tar.gz -C out .
+      - name: Verify package & checksums
+        run: |
+          set -euo pipefail
+          mkdir -p verify_out
+          tar -xzf MetaBrain-macos-arm64.tar.gz -C verify_out
+          for req in MetaBrain metabrain-hook SHA256SUMS.txt web/index.html web/app.js web/style.css; do
+            test -f "verify_out/$req" || { echo "Missing required asset: $req"; exit 1; }
+          done
+          (cd verify_out && shasum -a 256 -c SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MetaBrain-macos-arm64
+          path: MetaBrain-macos-arm64.tar.gz
 
   windows:
     runs-on: windows-latest
@@ -69,6 +144,7 @@ jobs:
           New-Item -ItemType Directory out | Out-Null
           Copy-Item rust\target\release\MetaBrain.exe, rust\target\release\metabrain-hook.exe out\
           Copy-Item build\metabrain.ico out\metabrain.ico
+          Copy-Item LICENSE, README.md out\
           Copy-Item metabrain\web out\web -Recurse
           $root = (Resolve-Path out).Path
           $files = Get-ChildItem -Path $root -Recurse -File | Sort-Object FullName
@@ -105,15 +181,35 @@ jobs:
           path: MetaBrain-windows-x64.zip
 
   release:
-    needs: [linux, windows]
+    needs: [linux, macos, windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: MetaBrain-windows-x64
+          path: dist
+          merge-multiple: true
+      - name: Generate unified SHA256SUMS.txt
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum MetaBrain-*.tar.gz MetaBrain-*.zip > SHA256SUMS.txt)
+          cat dist/SHA256SUMS.txt
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/MetaBrain-linux-x64.tar.gz
+            dist/MetaBrain-macos-arm64.tar.gz
+            dist/MetaBrain-windows-x64.zip
       - uses: softprops/action-gh-release@v2
         with:
-          files: MetaBrain-windows-x64.zip
+          generate_release_notes: true
+          files: |
+            dist/MetaBrain-linux-x64.tar.gz
+            dist/MetaBrain-macos-arm64.tar.gz
+            dist/MetaBrain-windows-x64.zip
+            dist/SHA256SUMS.txt

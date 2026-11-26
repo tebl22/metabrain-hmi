@@ -22,17 +22,17 @@ use std::path::{Path, PathBuf};
 
 pub(super) fn status_name(s: &str) -> &'static str {
     match s {
-        "queued" => "En cola",
-        "planning" => "Planificando",
-        "running" => "Trabajando",
-        "synthesizing" => "Sintetizando",
-        "verifying" => "Verificando",
-        "stopping" => "Interrumpiendo",
-        "review" => "Para revisar",
-        "done" => "Hecha",
-        "failed" => "Falló",
-        "stopped" => "Detenida",
-        "escalated" => "Escalada",
+        "queued" => "Queued",
+        "planning" => "Planning",
+        "running" => "Running",
+        "synthesizing" => "Synthesizing",
+        "verifying" => "Verifying",
+        "stopping" => "Stopping",
+        "review" => "Needs review",
+        "done" => "Done",
+        "failed" => "Failed",
+        "stopped" => "Stopped",
+        "escalated" => "Escalated",
         _ => "—",
     }
 }
@@ -74,9 +74,9 @@ fn chat_editor(ui: &mut egui::Ui, buf: &mut String, id: egui::Id, fresh: bool) -
     let send =
         ui.memory(|m| m.has_focus(id)) && ui.input_mut(|i| consume_chat_key(i, egui::Key::Enter));
     let hint = if fresh {
-        "Describe lo que necesitas… (pega, arrastra o adjunta imágenes y archivos)"
+        "Describe what you need… (paste, drag, or attach images and files)"
     } else {
-        "Responde o pide un cambio…"
+        "Reply or request a change…"
     };
     ui.add(
         egui::TextEdit::multiline(buf)
@@ -338,9 +338,9 @@ pub(super) fn tasks(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
             ui.shrink_clip_rect(rect);
             ui.horizontal(|ui| {
                 let tip = if open {
-                    "Ocultar conversaciones"
+                    "Hide conversations"
                 } else {
-                    "Mostrar conversaciones"
+                    "Show conversations"
                 };
                 if icon_button(
                     ui,
@@ -357,7 +357,7 @@ pub(super) fn tasks(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
             if t > 0.85 {
                 conversations(app, &mut ui, snap, &items, &subchats);
             } else if !open
-                && icon_button(&mut ui, Icon::Plus, "Nueva conversación", false, true).clicked()
+                && icon_button(&mut ui, Icon::Plus, "New conversation", false, true).clicked()
             {
                 app.ui.sel_task.clear();
                 app.ui.focus_composer = true;
@@ -399,13 +399,13 @@ pub(super) fn tasks(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
     diff_window(app, ui.ctx());
     if let Some(id) = app.ui.confirm_discard.clone() {
         egui::Modal::new(egui::Id::unique("confirm_discard")).show(ui.ctx(), |ui| {
-            ui.heading("¿Descartar la copia de trabajo?");
-            ui.label("Git eliminará la copia aislada, su rama y sus cambios.");
+            ui.heading("Discard isolated worktree?");
+            ui.label("Git will delete the isolated copy, its branch, and all uncommitted changes.");
             ui.horizontal(|ui| {
-                if quiet(ui, "Cancelar").clicked() {
+                if quiet(ui, "Cancel").clicked() {
                     app.ui.confirm_discard = None;
                 }
-                if danger(ui, "Descartar definitivamente").clicked() {
+                if danger(ui, "Discard permanently").clicked() {
                     app.ui.confirm_discard = None;
                     app.post(&format!("api/tasks/{id}/discard"), json!({}), |r| {
                         if let Some(error) = r.os("error") {
@@ -524,9 +524,9 @@ fn conv_menu(
         .unwrap_or(false);
     if ui
         .button(if unread_now {
-            "Marcar como leído"
+            "Mark as read"
         } else {
-            "Marcar como no leído"
+            "Mark as unread"
         })
         .clicked()
     {
@@ -543,11 +543,7 @@ fn conv_menu(
     }
     ui.separator();
     if ui
-        .button(if m.b("pinned", false) {
-            "Desfijar"
-        } else {
-            "Fijar"
-        })
+        .button(if m.b("pinned", false) { "Unpin" } else { "Pin" })
         .clicked()
     {
         acts.push(ConvAct::Set(
@@ -557,38 +553,38 @@ fn conv_menu(
         ));
         ui.close();
     }
-    if ui.button("Cambiar nombre").clicked() {
+    if ui.button("Rename").clicked() {
         acts.push(ConvAct::Rename(id.to_string(), String::new()));
         ui.close();
     }
-    ui.menu_button("Agregar al proyecto", |ui| {
+    ui.menu_button("Add to project", |ui| {
         for pj in projects {
             if ui.selectable_label(m.s("project") == *pj, pj).clicked() {
                 acts.push(ConvAct::Set(id.to_string(), "project", json!(pj)));
                 ui.close();
             }
         }
-        if !m.s("project").is_empty() && ui.button("Quitar del proyecto").clicked() {
+        if !m.s("project").is_empty() && ui.button("Remove from project").clicked() {
             acts.push(ConvAct::Set(id.to_string(), "project", json!("")));
             ui.close();
         }
-        if ui.button("Nuevo proyecto…").clicked() {
+        if ui.button("New project…").clicked() {
             acts.push(ConvAct::NewName(id.to_string(), true));
             ui.close();
         }
     });
-    ui.menu_button("Mover al grupo", |ui| {
+    ui.menu_button("Move to group", |ui| {
         for g in groups_named {
             if ui.selectable_label(m.s("group") == *g, g).clicked() {
                 acts.push(ConvAct::Set(id.to_string(), "group", json!(g)));
                 ui.close();
             }
         }
-        if !m.s("group").is_empty() && ui.button("Sacar del grupo").clicked() {
+        if !m.s("group").is_empty() && ui.button("Remove from group").clicked() {
             acts.push(ConvAct::Set(id.to_string(), "group", json!("")));
             ui.close();
         }
-        if ui.button("Nuevo grupo…").clicked() {
+        if ui.button("New group…").clicked() {
             acts.push(ConvAct::NewName(id.to_string(), false));
             ui.close();
         }
@@ -596,9 +592,9 @@ fn conv_menu(
     ui.separator();
     if ui
         .button(if m.b("archived", false) {
-            "Desarchivar"
+            "Unarchive"
         } else {
-            "Archivar"
+            "Archive"
         })
         .clicked()
     {
@@ -611,7 +607,7 @@ fn conv_menu(
     }
     if ui
         .add(egui::Button::new(
-            egui::RichText::new("Eliminar").color(ALARM),
+            egui::RichText::new("Delete").color(ALARM),
         ))
         .clicked()
     {
@@ -766,8 +762,8 @@ fn render_subchat_tree(
                     status_color(&sub.status).gamma_multiply(alpha),
                 );
             }
-            // Wave pill (O1, O2, ...).
-            let wave_txt = format!("O{}", sub.wave);
+            // Wave pill (W1, W2, ...).
+            let wave_txt = format!("W{}", sub.wave);
             let wg = p.layout_no_wrap(wave_txt, mono(9.5), accent.gamma_multiply(alpha));
             let ww = wg.size().x + 6.0;
             let wr = Rect::from_center_size(
@@ -790,7 +786,7 @@ fn render_subchat_tree(
 
             // Title + right-aligned short brain label.
             let short_brain = if sub.brain_name.is_empty() {
-                "cola".to_string()
+                "queued".to_string()
             } else {
                 sub.brain_name
                     .split_whitespace()
@@ -836,16 +832,16 @@ fn render_subchat_tree(
             );
 
             let tip = format!(
-                "Subchat · Ola {} · T{} · {}\nCerebro: {}{}\nEstado: {}",
+                "Subchat · Wave {} · T{} · {}\nBrain: {}{}\nStatus: {}",
                 sub.wave,
                 sub.tier,
                 if sub.role.is_empty() {
-                    "agente"
+                    "agent"
                 } else {
                     sub.role.as_str()
                 },
                 if sub.brain_name.is_empty() {
-                    "por asignar"
+                    "unassigned"
                 } else {
                     sub.brain_name.as_str()
                 },
@@ -874,7 +870,7 @@ fn conversations(
     items: &[Value],
     subchats: &HashMap<String, Vec<SubchatEntry>>,
 ) {
-    if primary(ui, "+  Nueva conversación").clicked() {
+    if primary(ui, "+  New conversation").clicked() {
         app.ui.sel_task.clear();
         app.ui.focus_composer = true;
     }
@@ -926,19 +922,19 @@ fn conversations(
             let has_proj = |t: &&Value| !meta(&t.s("id")).s("project").is_empty();
             ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new("Proyectos")
+                    egui::RichText::new("Projects")
                         .font(medium(11.5))
                         .color(INK3),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if icon_button(ui, Icon::Plus, "Nuevo proyecto", false, true).clicked() {
+                    if icon_button(ui, Icon::Plus, "New project", false, true).clicked() {
                         acts.push(ConvAct::NewName(String::new(), true));
                     }
                 });
             });
             if projects.is_empty() {
                 ui.label(faint(
-                    "Crea un proyecto con + y arrastra conversaciones a él.",
+                    "Create a project with + and drag conversations into it.",
                 ));
             }
             for pj in &projects {
@@ -1015,8 +1011,8 @@ fn conversations(
                 }
                 fresp.context_menu(|ui| {
                     if ui
-                        .button("Eliminar proyecto")
-                        .on_hover_text("Las conversaciones vuelven a la lista; no se borra nada")
+                        .button("Delete project")
+                        .on_hover_text("Conversations return to the main list; nothing is deleted")
                         .clicked()
                     {
                         acts.push(ConvAct::DropProject(pj.clone()));
@@ -1206,7 +1202,7 @@ fn conversations(
             let mut sections: Vec<(String, Vec<&Value>)> = vec![];
             let visible: Vec<&Value> = visible.into_iter().filter(|t| !has_proj(t)).collect();
             sections.push((
-                "Fijadas".into(),
+                "Pinned".into(),
                 visible
                     .iter()
                     .copied()
@@ -1232,7 +1228,7 @@ fn conversations(
             };
             let st_groups: [(&str, &[&str]); 3] = [
                 (
-                    "En curso",
+                    "In progress",
                     &[
                         "planning",
                         "running",
@@ -1242,8 +1238,8 @@ fn conversations(
                         "stopping",
                     ],
                 ),
-                ("Para revisar", &["review", "failed", "stopped"]),
-                ("Anteriores", &["done", "escalated"]),
+                ("Needs review", &["review", "failed", "stopped"]),
+                ("Previous", &["done", "escalated"]),
             ];
             for (title, sts) in st_groups {
                 sections.push((
@@ -1258,7 +1254,7 @@ fn conversations(
             }
             if app.ui.show_archived {
                 sections.push((
-                    "Archivadas".into(),
+                    "Archived".into(),
                     items
                         .iter()
                         .filter(|t| meta(&t.s("id")).b("archived", false))
@@ -1343,9 +1339,9 @@ fn conversations(
                             )
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .on_hover_text(if is_open {
-                                "Contraer subchats de agentes"
+                                "Collapse agent subchats"
                             } else {
-                                "Ver subchats de agentes"
+                                "Show agent subchats"
                             });
                         sub_toggle_hovered = sresp.hovered();
                         if sresp.clicked() {
@@ -1492,7 +1488,7 @@ fn conversations(
                 ui.add_space(8.0);
             }
             if items.is_empty() {
-                ui.label(faint("Tus conversaciones aparecerán aquí."));
+                ui.label(faint("Your conversations will appear here."));
             }
             let n_arch = items
                 .iter()
@@ -1502,9 +1498,9 @@ fn conversations(
                 && ui
                     .link(
                         egui::RichText::new(if app.ui.show_archived {
-                            "Ocultar archivadas".to_string()
+                            "Hide archived".to_string()
                         } else {
-                            format!("Archivadas ({n_arch})")
+                            format!("Archived ({n_arch})")
                         })
                         .font(body(11.5))
                         .color(INK3),
@@ -1561,7 +1557,7 @@ fn conversations(
         if released_now(ui) {
             if let Some(pj) = dropped.take() {
                 acts.push(ConvAct::Set(did.clone(), "project", json!(pj)));
-                app.say(format!("Movida a {pj}"), RUN);
+                app.say(format!("Moved to {pj}"), RUN);
             }
             ui.ctx().data_mut(|d| d.remove::<String>(drag_mem));
         }
@@ -1615,32 +1611,28 @@ fn conversations(
 fn conv_dialogs(app: &mut App, ctx: &egui::Context, items: &[Value]) {
     if let Some((id, mut buf, project)) = app.ui.conv_newgroup.clone() {
         let mut done: Option<bool> = None;
-        egui::Window::new(if project {
-            "Nuevo proyecto"
-        } else {
-            "Nuevo grupo"
-        })
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-        .show(ctx, |ui| {
-            let r = ui.add(
-                egui::TextEdit::singleline(&mut buf)
-                    .hint_text("Nombre")
-                    .desired_width(260.0),
-            );
-            r.request_focus();
-            ui.horizontal(|ui| {
-                if primary(ui, "Crear").clicked()
-                    || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                {
-                    done = Some(true);
-                }
-                if quiet(ui, "Cancelar").clicked() {
-                    done = Some(false);
-                }
+        egui::Window::new(if project { "New project" } else { "New group" })
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                let r = ui.add(
+                    egui::TextEdit::singleline(&mut buf)
+                        .hint_text("Name")
+                        .desired_width(260.0),
+                );
+                r.request_focus();
+                ui.horizontal(|ui| {
+                    if primary(ui, "Create").clicked()
+                        || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                    {
+                        done = Some(true);
+                    }
+                    if quiet(ui, "Cancel").clicked() {
+                        done = Some(false);
+                    }
+                });
             });
-        });
         match done {
             Some(true) if !buf.trim().is_empty() && id.is_empty() => {
                 if !app.ui.convs.is_object() {
@@ -1684,17 +1676,17 @@ fn conv_dialogs(app: &mut App, ctx: &egui::Context, items: &[Value]) {
             .map(|t| conv_title(app, t))
             .unwrap_or_default();
         let mut close = false;
-        egui::Window::new("Eliminar conversación").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO).show(ctx, |ui| {
-            ui.label(format!("¿Eliminar «{name}»? Desaparece de la lista y no se puede deshacer. Los archivos de tu proyecto no se tocan."));
+        egui::Window::new("Delete conversation").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO).show(ctx, |ui| {
+            ui.label(format!("Delete \"{name}\"? It will be removed from the list and cannot be undone. Your project files are not touched."));
             ui.horizontal(|ui| {
-                if danger(ui, "Eliminar").clicked() {
+                if danger(ui, "Delete").clicked() {
                     conv_set(app, &id, "deleted", json!(true));
                     if app.ui.sel_task == id {
                         app.ui.sel_task.clear();
                     }
                     close = true;
                 }
-                if quiet(ui, "Cancelar").clicked() {
+                if quiet(ui, "Cancel").clicked() {
                     close = true;
                 }
             });
@@ -1719,7 +1711,7 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui, snap: &Value, h: f32) {
                 bubble_user(ui, &pending.body.s("prompt"), &files);
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label(faint("Iniciando conversación…"));
+                    ui.label(faint("Starting conversation…"));
                 });
             });
             return;
@@ -1728,13 +1720,13 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui, snap: &Value, h: f32) {
     ui.add_space(((h - 400.0) * 0.4).clamp(0.0, h * 0.22));
     ui.vertical_centered(|ui| {
         ui.label(
-            egui::RichText::new("¿En qué trabajamos?")
+            egui::RichText::new("What are we working on?")
                 .font(cond(30.0))
                 .color(INK),
         );
         ui.add_space(2.0);
         ui.label(dim(
-            "MetaBrain elige el cerebro más barato que pueda hacerlo y comprueba el resultado.",
+            "MetaBrain picks the most cost-effective brain for the job and verifies the result.",
         ));
     });
     ui.add_space(18.0);
@@ -1743,10 +1735,10 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui, snap: &Value, h: f32) {
         ui.add_space(12.0);
         ui.horizontal_wrapped(|ui| {
             for s in [
-                "Revisa este proyecto y dime qué mejorar",
-                "Escribe pruebas para el módulo principal",
-                "Arregla el error que falla al compilar",
-                "Resume los cambios de hoy",
+                "Review this project and tell me what to improve",
+                "Write tests for the core module",
+                "Fix the failing build error",
+                "Summarize today's changes",
             ] {
                 if ui
                     .add(
@@ -2027,22 +2019,22 @@ pub(super) fn composer_box(
                                 let r_dot = 3.2 + switch_pulse * 1.8;
                                 ui.painter().circle_filled(dr.center(), r_dot, banner_col.gamma_multiply(banner_k));
                                 let mut desc = if !det.available {
-                                    format!("{} no disponible ahora ({})", det.brain_name, det.reason)
+                                    format!("{} unavailable right now ({})", det.brain_name, det.reason)
                                 } else if det.parallel {
-                                    "Orquestación paralela activada automáticamente".to_string()
+                                    "Parallel orchestration activated automatically".to_string()
                                 } else if det.model.is_empty() {
-                                    format!("Cambio automático → {}", det.brain_name)
+                                    format!("Auto-switched → {}", det.brain_name)
                                 } else {
-                                    format!("Cambio automático → {} · {}", det.brain_name, crate::gui::home::model_label(&det.model))
+                                    format!("Auto-switched → {} · {}", det.brain_name, crate::gui::home::model_label(&det.model))
                                 };
                                 if let Some(bm) = det.build_mode {
-                                    desc.push_str(if bm { " · Construir" } else { " · Planear" });
+                                    desc.push_str(if bm { " · Build" } else { " · Plan" });
                                 }
                                 ui.label(egui::RichText::new(desc).font(medium(11.5)).color(banner_col.gamma_multiply(banner_k)));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     if ui
                                         .add(
-                                            egui::Button::new(egui::RichText::new("Restablecer").font(body(10.5)).color(INK2))
+                                            egui::Button::new(egui::RichText::new("Reset").font(body(10.5)).color(INK2))
                                                 .fill(Color32::TRANSPARENT)
                                                 .stroke(Stroke::new(0.8, RULE))
                                                 .corner_radius(CornerRadius::same(6)),
@@ -2132,7 +2124,7 @@ pub(super) fn composer_box(
                                 }
                                 let short: String = name.chars().take(28).collect();
                                 ui.label(egui::RichText::new(short).font(body(12.0)).color(INK2)).on_hover_text(f);
-                                if icon_button(ui, Icon::Close, "Quitar", false, true).clicked() {
+                                if icon_button(ui, Icon::Close, "Remove", false, true).clicked() {
                                     drop_i = Some(i);
                                 }
                             });
@@ -2161,19 +2153,19 @@ pub(super) fn composer_box(
                     };
                     let any_avail = chain.iter().any(|e| e.b("available", false));
                     let opts: [(&str, &str, Option<String>); 6] = [
-                        ("Auto", "MetaBrain elige el cerebro más barato que pueda hacerlo", Some("auto".to_string())),
-                        ("Paralelo", "Motor paralelo (DAG + varios cerebros a la vez): reparte subtareas según cuota y jerarquía, y el Director sintetiza", if any_avail { Some("parallel".to_string()) } else { None }),
-                        ("Claude Code", "Agente de programación de Claude: edita archivos, ejecuta y prueba", first(&["claude_code"], false)),
-                        ("Codex", "Agente de programación de ChatGPT: edita archivos, ejecuta y prueba", first(&["codex"], false)),
-                        ("Gemini", "Tu cuenta de Google (Antigravity)", first(&["antigravity", "gemini_cli"], false)),
-                        ("Barato", "API económica (DeepSeek o Gemini por API)", first(&[], true)),
+                        ("Auto", "MetaBrain picks the most cost-effective brain for the job", Some("auto".to_string())),
+                        ("Parallel", "Parallel DAG engine (multiple brains at once): distributes subtasks by quota and hierarchy, then synthesizes", if any_avail { Some("parallel".to_string()) } else { None }),
+                        ("Claude Code", "Claude coding agent: edits files, runs commands, and tests", first(&["claude_code"], false)),
+                        ("Codex", "ChatGPT coding agent: edits files, runs commands, and tests", first(&["codex"], false)),
+                        ("Gemini", "Your Google account (Antigravity / Gemini CLI)", first(&["antigravity", "gemini_cli"], false)),
+                        ("Low-cost", "Low-cost API (DeepSeek, OpenRouter, or Gemini API)", first(&[], true)),
                     ];
                     let kind_of = |id: &str| brains.iter().find(|b| b.s("id") == id).map(|b| b.s("kind")).unwrap_or_default();
                     let cur_kind = kind_of(&app.ui.brain);
                     for (label, tip, target) in opts.iter() {
                         let on = match *label {
                             "Auto" => app.ui.brain == "auto",
-                            "Paralelo" => app.ui.brain == "parallel",
+                            "Parallel" => app.ui.brain == "parallel",
                             "Claude Code" => cur_kind == "claude_code",
                             "Codex" => cur_kind == "codex",
                             "Gemini" => cur_kind == "antigravity" || cur_kind == "gemini_cli",
@@ -2181,7 +2173,7 @@ pub(super) fn composer_box(
                         };
                         let enabled = target.is_some();
                         let pill_fill = if on {
-                            if *label == "Paralelo" { INFO } else { MASTER }
+                            if *label == "Parallel" { INFO } else { MASTER }
                         } else {
                             Color32::TRANSPARENT
                         };
@@ -2189,7 +2181,7 @@ pub(super) fn composer_box(
                             .fill(pill_fill)
                             .stroke(Stroke::new(1.0, if on { pill_fill } else { RULE }))
                             .corner_radius(CornerRadius::same(12));
-                        let r = ui.add_enabled(enabled, b).on_hover_text(*tip).on_disabled_hover_text("No hay uno disponible ahora: conéctalo en Cerebros o espera a que tenga cuota");
+                        let r = ui.add_enabled(enabled, b).on_hover_text(*tip).on_disabled_hover_text("None available right now: connect one in Brains or wait for quota recovery");
                         if on && switch_pulse > 0.05 {
                             ui.painter().rect_stroke(
                                 r.rect.expand(switch_pulse * 3.0),
@@ -2216,7 +2208,7 @@ pub(super) fn composer_box(
                     let models = brain_models(&brains, &app.ui.brain);
                     if !models.is_empty() {
                         let sel_lbl = if app.ui.model.is_empty() {
-                            "Modelo: auto".to_string()
+                            "Model: auto".to_string()
                         } else {
                             crate::gui::home::model_label(&app.ui.model)
                         };
@@ -2225,7 +2217,7 @@ pub(super) fn composer_box(
                             .selected_text(egui::RichText::new(sel_lbl).font(mono(11.5)).color(if app.ui.model.is_empty() { INK2 } else { accent }))
                             .width(148.0)
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut chosen, String::new(), "Modelo automático");
+                                ui.selectable_value(&mut chosen, String::new(), "Auto model");
                                 for m in &models {
                                     ui.selectable_value(&mut chosen, m.clone(), crate::gui::home::model_label(m));
                                 }
@@ -2237,13 +2229,13 @@ pub(super) fn composer_box(
                             app.ui.model = chosen;
                         }
                     }
-                    egui::ComboBox::from_id_salt("chat_mode").selected_text(egui::RichText::new(if app.ui.build { "Construir" } else { "Planear" }).font(body(12.5))).width(100.0).show_ui(ui, |ui| {
-                        ui.selectable_value(&mut app.ui.build, true, "Construir: hace los cambios");
-                        ui.selectable_value(&mut app.ui.build, false, "Planear: solo analiza");
+                    egui::ComboBox::from_id_salt("chat_mode").selected_text(egui::RichText::new(if app.ui.build { "Build" } else { "Plan" }).font(body(12.5))).width(100.0).show_ui(ui, |ui| {
+                        ui.selectable_value(&mut app.ui.build, true, "Build: applies edits");
+                        ui.selectable_value(&mut app.ui.build, false, "Plan: analyze only");
                     });
                 });
                 ui.horizontal_wrapped(|ui| {
-                    let folder = if app.ui.cwd.trim().is_empty() { "Elegir carpeta".to_string() } else { short_path(app.ui.cwd.trim()) };
+                    let folder = if app.ui.cwd.trim().is_empty() { "Choose folder".to_string() } else { short_path(app.ui.cwd.trim()) };
                     let fr = ui.add(egui::Button::new(egui::RichText::new(folder).font(body(12.5)).color(INK2)).fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, RULE)));
                     if fr.clicked() {
                         #[cfg(windows)]
@@ -2253,7 +2245,7 @@ pub(super) fn composer_box(
                         #[cfg(not(windows))]
                         { app.ui.cwd_edit = !app.ui.cwd_edit; }
                     }
-                    ui.menu_button("Carpetas recientes", |ui| {
+                    ui.menu_button("Recent folders", |ui| {
                         let config = crate::util::read_json(&crate::util::data_dir().join("gui.json")).unwrap_or_default();
                         for folder in config.arr("recent_cwd").iter().filter_map(Value::as_str) {
                             if ui.button(short_path(folder)).on_hover_text(folder).clicked() {
@@ -2262,12 +2254,12 @@ pub(super) fn composer_box(
                                 ui.close();
                             }
                         }
-                        if ui.button("Escribir ruta").clicked() {
+                        if ui.button("Enter path").clicked() {
                             app.ui.cwd_edit = true;
                             ui.close();
                         }
                     });
-                    ui.checkbox(&mut app.ui.worktree, egui::RichText::new("copia aparte").font(body(12.0)).color(INK3)).on_hover_text("Trabaja en una copia del repositorio (git worktree); apruebas o descartas al final");
+                    ui.checkbox(&mut app.ui.worktree, egui::RichText::new("worktree copy").font(body(12.0)).color(INK3)).on_hover_text("Work in an isolated git worktree; approve or discard when done");
                 });
                 if app.ui.worktree {
                     let cwd_key = app.ui.cwd.trim().to_string();
@@ -2281,9 +2273,9 @@ pub(super) fn composer_box(
                     };
                     if !is_git {
                         let msg = if cwd_key.is_empty() {
-                            "Elige una carpeta con repositorio Git para usar copia aparte."
+                            "Choose a folder with a Git repository to use an isolated worktree."
                         } else {
-                            "Esta carpeta no tiene .git; la tarea se ejecutará directamente en ella."
+                            "This folder has no .git; the task will run directly in place."
                         };
                         ui.label(egui::RichText::new(msg).font(body(11.5)).color(ATTN));
                     }
@@ -2292,11 +2284,11 @@ pub(super) fn composer_box(
             ui.horizontal(|ui| {
                 let attach_btn = ui.add_enabled(
                     app.ui.file_picker.is_none(),
-                    egui::Button::new(egui::RichText::new("+ Adjuntar").font(medium(12.0)).color(INK2))
+                    egui::Button::new(egui::RichText::new("+ Attach").font(medium(12.0)).color(INK2))
                         .fill(Color32::TRANSPARENT)
                         .stroke(Stroke::new(1.0, RULE))
                         .corner_radius(CornerRadius::same(R)),
-                ).on_hover_text("Adjuntar archivos o imágenes (también puedes pegar con Ctrl+V o arrastrar)");
+                ).on_hover_text("Attach files or images (you can also paste with Ctrl+V or drag & drop)");
                 if attach_btn.clicked() {
                     #[cfg(windows)]
                     {
@@ -2330,26 +2322,26 @@ pub(super) fn composer_box(
                     let picked = app.ui.reply_brain.get(tid).cloned().unwrap_or_default();
                     let name_of = |id: &str| {
                         if id == "parallel" {
-                            "Motor paralelo".to_string()
+                            "Parallel Engine".to_string()
                         } else {
                             brains.iter().find(|b| b.s("id") == id).map(|b| b.s("name")).unwrap_or_else(|| id.to_string())
                         }
                     };
                     let shown = match picked.as_str() {
-                        "auto" => "Auto para el próximo turno".to_string(),
-                        "parallel" => "Orquestar en paralelo".to_string(),
-                        "" if default_auto => format!("Auto · actual: {}", name_of(&cur_brain)),
-                        "" | "current" => format!("Sigue: {}", name_of(&cur_brain)),
-                        _ => format!("Cambia a: {}", name_of(&picked)),
+                        "auto" => "Auto for next turn".to_string(),
+                        "parallel" => "Orchestrate in parallel".to_string(),
+                        "" if default_auto => format!("Auto · current: {}", name_of(&cur_brain)),
+                        "" | "current" => format!("Continue: {}", name_of(&cur_brain)),
+                        _ => format!("Switch to: {}", name_of(&picked)),
                     };
                     let mut choice = picked.clone();
                     let combo_w = (ui.available_width() - 210.0).clamp(110.0, 200.0);
                     egui::ComboBox::from_id_salt(("reply_brain", tid)).selected_text(egui::RichText::new(shown).font(body(12.5))).width(combo_w).show_ui(ui, |ui| {
                         if cur_brain != "parallel" {
-                            ui.selectable_value(&mut choice, "auto".into(), "Elegir según el próximo turno");
-                            ui.selectable_value(&mut choice, "parallel".into(), "Orquestar en paralelo (agentes)");
+                            ui.selectable_value(&mut choice, "auto".into(), "Choose based on next turn");
+                            ui.selectable_value(&mut choice, "parallel".into(), "Orchestrate in parallel (agents)");
                         }
-                        ui.selectable_value(&mut choice, "current".into(), format!("Seguir con {}", name_of(&cur_brain)));
+                        ui.selectable_value(&mut choice, "current".into(), format!("Continue with {}", name_of(&cur_brain)));
                         for b in &brains {
                             let id = b.s("id");
                             if id == cur_brain {
@@ -2358,7 +2350,7 @@ pub(super) fn composer_box(
                             let ok = chain.iter().any(|e| e.s("id") == id && e.b("available", false));
                             let can = crate::tasks::can_run_task_on(&b.s("kind"), &mode);
                             let why = chain.iter().find(|e| e.s("id") == id).map(|e| e.s("reason")).unwrap_or_default();
-                            let label = if ok && can { b.s("name") } else if !can { format!("{} (no edita archivos)", b.s("name")) } else { format!("{} ({why})", b.s("name")) };
+                            let label = if ok && can { b.s("name") } else if !can { format!("{} (cannot edit files)", b.s("name")) } else { format!("{} ({why})", b.s("name")) };
                             ui.add_enabled_ui(ok && can, |ui| {
                                 ui.selectable_value(&mut choice, id.clone(), label);
                             });
@@ -2381,7 +2373,7 @@ pub(super) fn composer_box(
                     if !models.is_empty() && eff_brain != "parallel" {
                         let cur_model = app.ui.reply_model.get(tid).cloned().unwrap_or_default();
                         let sel_lbl = if cur_model.is_empty() {
-                            "Modelo: igual".to_string()
+                            "Model: same".to_string()
                         } else {
                             crate::gui::home::model_label(&cur_model)
                         };
@@ -2390,7 +2382,7 @@ pub(super) fn composer_box(
                             .selected_text(egui::RichText::new(sel_lbl).font(mono(11.5)).color(if cur_model.is_empty() { INK2 } else { accent }))
                             .width(136.0)
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut m_choice, String::new(), "Mantener modelo");
+                                ui.selectable_value(&mut m_choice, String::new(), "Keep model");
                                 for m in &models {
                                     ui.selectable_value(&mut m_choice, m.clone(), crate::gui::home::model_label(m));
                                 }
@@ -2420,7 +2412,7 @@ pub(super) fn composer_box(
                             let sp = ui.painter();
                             sp.circle_filled(sr.center(), 15.0, if can_redirect { MASTER } else { RAISED2 });
                             paint_icon(sp, sr.shrink(9.0), Icon::Up, if can_redirect { dark } else { INK3 });
-                            let shint = if queued_here { "Enviando al interrumpir…" } else { "Interrumpir y enviar (Enter)" };
+                            let shint = if queued_here { "Sending after stop…" } else { "Interrupt & send (Enter)" };
                             sresp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, can_redirect, shint));
                             redirect_clicked = sresp.on_hover_text(shint).clicked();
                         }
@@ -2429,7 +2421,7 @@ pub(super) fn composer_box(
                         let p = ui.painter();
                         p.circle_filled(rr.center(), 15.0, if interruptible { ATTN } else { RAISED2 });
                         p.rect_filled(Rect::from_center_size(rr.center(), Vec2::splat(10.0)), 2.0, if interruptible { dark } else { INK3 });
-                        let hint = if interruptible { "Interrumpir (Esc)" } else { "Interrumpiendo…" };
+                        let hint = if interruptible { "Stop (Esc)" } else { "Stopping…" };
                         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, interruptible, hint));
                         let stop_clicked = resp.on_hover_text(hint).clicked();
 
@@ -2460,9 +2452,9 @@ pub(super) fn composer_box(
 
                         if ui.available_width() > 210.0 {
                             let label = if !empty {
-                                "Enter interrumpe y envía · Esc detiene"
+                                "Enter interrupts & sends · Esc stops"
                             } else {
-                                "Esc interrumpe · escribe para redirigir"
+                                "Esc stops · type to redirect"
                             };
                             ui.label(faint(label));
                         }
@@ -2472,7 +2464,7 @@ pub(super) fn composer_box(
                         let p = ui.painter();
                         p.circle_filled(rr.center(), 15.0, if disabled { RAISED2 } else { accent });
                         paint_icon(p, rr.shrink(9.0), Icon::Up, if disabled { INK3 } else { dark });
-                        let hint = "Enviar (Enter)";
+                        let hint = "Send (Enter)";
                         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, !disabled, hint));
                         let clicked = resp.on_hover_text(hint).clicked();
                         let go = (clicked || send_key) && !disabled;
@@ -2521,7 +2513,7 @@ pub(super) fn composer_box(
                             }
                         }
                         if ui.available_width() > 210.0 {
-                            ui.label(faint("Enter envía · Shift+Enter salto"));
+                            ui.label(faint("Enter sends · Shift+Enter newline"));
                         }
                     }
                 });
@@ -2530,8 +2522,8 @@ pub(super) fn composer_box(
                 if app.ui.queued_follow_up.as_ref().is_some_and(|q| q.task_id == tid) {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(egui::RichText::new("Interrumpiendo para enviar tu mensaje…").font(body(12.0)).color(ATTN));
-                        if quiet(ui, "Cancelar").clicked() {
+                        ui.label(egui::RichText::new("Stopping to send your message…").font(body(12.0)).color(ATTN));
+                        if quiet(ui, "Cancel").clicked() {
                             app.ui.queued_follow_up = None;
                         }
                     });
@@ -2539,8 +2531,8 @@ pub(super) fn composer_box(
             }
             if app.ui.file_attach_edit {
                 ui.horizontal(|ui| {
-                    let r = ui.add(egui::TextEdit::singleline(&mut app.ui.file_attach_buf).hint_text("Ruta del archivo a adjuntar…").desired_width((ui.available_width() - 80.0).max(1.0)).font(mono(12.0)));
-                    let add_it = quiet(ui, "Agregar").clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                    let r = ui.add(egui::TextEdit::singleline(&mut app.ui.file_attach_buf).hint_text("File path to attach…").desired_width((ui.available_width() - 80.0).max(1.0)).font(mono(12.0)));
+                    let add_it = quiet(ui, "Add").clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
                     if add_it {
                         let p = app.ui.file_attach_buf.trim().to_string();
                         if !p.is_empty() && !draft.files.contains(&p) {
@@ -2552,10 +2544,10 @@ pub(super) fn composer_box(
                 });
             }
             if fresh && app.ui.cwd_edit {
-                ui.label(faint("Carpeta del proyecto"));
+                ui.label(faint("Project folder"));
                 ui.horizontal(|ui| {
-                    let r = ui.add(egui::TextEdit::singleline(&mut app.ui.cwd).hint_text("C:\\ruta\\al\\proyecto").desired_width((ui.available_width() - 70.0).max(1.0)).font(mono(12.0)));
-                    if r.lost_focus() || quiet(ui, "Listo").clicked() {
+                    let r = ui.add(egui::TextEdit::singleline(&mut app.ui.cwd).hint_text("/path/to/project").desired_width((ui.available_width() - 70.0).max(1.0)).font(mono(12.0)));
+                    if r.lost_focus() || quiet(ui, "Done").clicked() {
                         remember_folder(&app.ui.cwd);
                         app.ui.cwd_edit = false;
                     }
@@ -2601,7 +2593,7 @@ fn pick_folder(initial: String, ctx: egui::Context) -> std::sync::mpsc::Receiver
             [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
             Add-Type -AssemblyName System.Windows.Forms
             $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-            $dialog.Description = 'Selecciona la carpeta del proyecto'
+            $dialog.Description = 'Select project folder'
             if ([IO.Directory]::Exists($env:METABRAIN_PICKER_INITIAL)) {
                 $dialog.SelectedPath = $env:METABRAIN_PICKER_INITIAL
             }
@@ -2636,9 +2628,9 @@ fn pick_files(initial: String, ctx: egui::Context) -> std::sync::mpsc::Receiver<
             [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
             Add-Type -AssemblyName System.Windows.Forms
             $dialog = New-Object System.Windows.Forms.OpenFileDialog
-            $dialog.Title = 'Selecciona archivos para adjuntar'
+            $dialog.Title = 'Select files to attach'
             $dialog.Multiselect = $true
-            $dialog.Filter = 'Todos los archivos (*.*)|*.*|Imágenes|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp'
+            $dialog.Filter = 'All files (*.*)|*.*|Images|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp'
             if ([IO.Directory]::Exists($env:METABRAIN_PICKER_INITIAL)) {
                 $dialog.InitialDirectory = $env:METABRAIN_PICKER_INITIAL
             }
@@ -2727,7 +2719,7 @@ fn finish_chat_submit(app: &mut App) {
     let result = match pending.result.try_recv() {
         Ok(result) => result,
         Err(TryRecvError::Empty) => return,
-        Err(TryRecvError::Disconnected) => json!({"error": "Se perdió la conexión al enviar."}),
+        Err(TryRecvError::Disconnected) => json!({"error": "Connection lost while sending."}),
     };
     let pending = app.ui.pending_open.take().unwrap();
     apply_chat_submit(&mut app.ui, &pending.origin, &pending.body, &result);

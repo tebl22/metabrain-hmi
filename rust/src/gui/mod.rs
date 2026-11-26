@@ -258,6 +258,22 @@ impl App {
 
 /// Fill the shared data. `full` also refreshes the slow sources (savings, router, doctor).
 fn refresh(sup: &Arc<Supervisor>, data: &Arc<RwLock<Data>>, full: bool) {
+    if std::env::var("METABRAIN_DEMO").is_ok() {
+        let (snap, tasks, parallel_runs, savings) = demo_sandbox();
+        if let Ok(mut d) = data.write() {
+            d.snap = snap;
+            d.approvals = json!({"pending": []});
+            d.tasks = tasks;
+            d.parallel_runs = parallel_runs;
+            d.savings = savings;
+            d.arch = json!({});
+            d.at = now();
+        }
+        if let Some(c) = CTX.get() {
+            c.request_repaint();
+        }
+        return;
+    }
     let snap = sup.snapshot();
     let (_, wait_s) = crate::approvals::settings(&sup.cfg.get());
     let approvals = crate::approvals::list(30, wait_s);
@@ -272,11 +288,6 @@ fn refresh(sup: &Arc<Supervisor>, data: &Arc<RwLock<Data>>, full: bool) {
         )
     } else {
         (None, None, None)
-    };
-    let snap = if std::env::var("METABRAIN_DEMO").is_ok() {
-        demo(snap)
-    } else {
-        snap
     };
     if let Ok(mut d) = data.write() {
         d.snap = snap;
@@ -355,6 +366,19 @@ pub fn run(sup: Arc<Supervisor>, port: u16, hidden: bool) -> Result<(), String> 
             }
             #[cfg(windows)]
             let tray = tray::build(&cc.egui_ctx);
+            let mut ui_state = pages::UiState::default();
+            if let Ok(sel) = std::env::var("METABRAIN_SEL") {
+                if !sel.trim().is_empty() {
+                    ui_state.sel = sel.trim().to_string();
+                }
+            }
+            if std::env::var("METABRAIN_DEMO").is_ok() {
+                ui_state.nav_open = true;
+                ui_state.sel_task = "demo-run-oauth".to_string();
+                ui_state.subchat_open.insert("demo-run-oauth".into(), true);
+                ui_state.prompt =
+                    "use opus and run in parallel: add OAuth2 PKCE flow with unit tests".into();
+            }
             Ok(Box::new(App {
                 sup,
                 port,
@@ -371,7 +395,7 @@ pub fn run(sup: Arc<Supervisor>, port: u16, hidden: bool) -> Result<(), String> 
                     })
                     .unwrap_or(Page::Home),
                 toast: None,
-                ui: pages::UiState::default(),
+                ui: ui_state,
                 quitting: false,
                 #[cfg(windows)]
                 _tray: tray,
@@ -444,7 +468,7 @@ impl eframe::App for App {
             }))
             .show(ui, |ui| {
                 if snap.is_null() {
-                    ui.centered_and_justified(|ui| ui.label(dim("Leyendo los cerebros…")));
+                    ui.centered_and_justified(|ui| ui.label(dim("Loading brains…")));
                     return;
                 }
                 if self.page == Page::Tasks {
@@ -521,10 +545,10 @@ mod tray {
     pub fn build(ctx: &egui::Context) -> Option<tray_icon::TrayIcon> {
         let (rgba, w, h) = crate::app::tray_rgba()?;
         let icon = tray_icon::Icon::from_rgba(rgba, w, h).ok()?;
-        let open = MenuItem::new("Abrir MetaBrain", true, None);
-        let pause = MenuItem::new("Pausar todo", true, None);
-        let resume = MenuItem::new("Reanudar todo", true, None);
-        let quit = MenuItem::new("Salir de MetaBrain", true, None);
+        let open = MenuItem::new("Open MetaBrain", true, None);
+        let pause = MenuItem::new("Pause all", true, None);
+        let resume = MenuItem::new("Resume all", true, None);
+        let quit = MenuItem::new("Quit MetaBrain", true, None);
         let menu = Menu::new();
         let _ = menu.append_items(&[
             &open,
@@ -589,23 +613,334 @@ mod tray {
     }
 }
 
-/// Sample activity for screenshots of the design (METABRAIN_DEMO=1); never used otherwise.
-fn demo(mut snap: Value) -> Value {
+/// Zero-PII, self-contained demo sandbox (`MetaBrain serve --demo` / `METABRAIN_DEMO=1`).
+/// Lets evaluators explore Mission Control without connecting any API keys, CLIs, or hooks.
+fn demo_sandbox() -> (Value, Value, Vec<crate::parallel::ParallelRun>, Value) {
     let t = now();
-    if let Some(bs) = snap.get_mut("brains").and_then(|v| v.as_array_mut()) {
-        for (i, b) in bs.iter_mut().enumerate() {
-            let subs: Vec<Value> = (0..[4, 2, 3, 1][i % 4])
-                .map(|k: usize| json!({"id": format!("x{k}"), "desc": (["Revisar tests del parser", "Buscar usos de config", "Refactor de router.rs", "Leer documentación"][k % 4]), "model": "claude-haiku-5-5", "tokens": 12000 * (k + 1), "alive": k.is_multiple_of(2), "type": "general"}))
-                .collect();
-            b["subagents"] = json!(subs);
-            b["active"] = json!(i < 2);
-            b["quota"] = json!([{"group": "session", "pct": ([34.0, 71.0, 92.0, 12.0][i % 4]), "reset": t + 3600.0 * (i as f64 + 1.0)}]);
-            b["usage"] = json!({"today": 180000.0 * (i as f64 + 1.0), "d7": 2_400_000.0 / (i as f64 + 1.0), "h5": 90000.0, "hourly": (0..24).map(|h| ((h * 7 + i * 13) % 11) as f64 * 1000.0).collect::<Vec<_>>(), "daily": (0..30).map(|d| ((d * 5 + i * 3) % 13) as f64 * 40000.0 + 20000.0).collect::<Vec<_>>()});
+    let mk_hourly = |seed: usize| -> Vec<f64> {
+        (0..24)
+            .map(|h| {
+                let wave = ((h * 5 + seed * 11) % 13) as f64;
+                if (8..=21).contains(&h) {
+                    (wave + 4.0) * 1_650.0
+                } else {
+                    wave * 320.0
+                }
+            })
+            .collect()
+    };
+    let mk_daily = |seed: usize, scale: f64| -> Vec<f64> {
+        (0..30)
+            .map(|d| (((d * 7 + seed * 5) % 11) as f64 * 0.14 + 0.35) * scale)
+            .collect()
+    };
+
+    let brains = json!([
+        {
+            "id": "claude-work",
+            "name": "Claude Work",
+            "kind": "claude_code",
+            "enabled": true,
+            "active": true,
+            "model": "claude-sonnet-4-6",
+            "models": ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"],
+            "quota": [
+                {"group": "session", "pct": 38.0, "reset": t + 7_800.0},
+                {"group": "weekly", "pct": 44.0, "reset": t + 260_000.0}
+            ],
+            "effective": {"paused": false, "model": "claude-sonnet-4-6"},
+            "state": {"paused": false},
+            "usage": {"today": 312_000.0, "h5": 148_000.0, "d7": 2_450_000.0, "usd_today": 0.0, "hourly": mk_hourly(1), "daily": mk_daily(1, 340_000.0)},
+            "subagents": [
+                {"id": "sub-1", "desc": "Audit OAuth2 PKCE edge cases", "model": "claude-haiku-4-5", "tokens": 24_500, "alive": true, "type": "explore"},
+                {"id": "sub-2", "desc": "Verify token refresh tests", "model": "claude-sonnet-4-6", "tokens": 41_200, "alive": true, "type": "verify"}
+            ],
+            "jobs": [
+                {"to": "codex-cli", "task": "Implement PKCE verifier & tests", "alive": true}
+            ]
+        },
+        {
+            "id": "codex-cli",
+            "name": "Codex CLI",
+            "kind": "codex",
+            "enabled": true,
+            "active": true,
+            "model": "gpt-5.4",
+            "models": ["gpt-5.4", "gpt-5.4-mini"],
+            "quota": [
+                {"group": "session", "pct": 64.0, "reset": t + 5_400.0},
+                {"group": "weekly", "pct": 51.0, "reset": t + 340_000.0}
+            ],
+            "effective": {"paused": false, "model": "gpt-5.4"},
+            "state": {"paused": false},
+            "usage": {"today": 246_000.0, "h5": 112_000.0, "d7": 1_890_000.0, "usd_today": 0.0, "hourly": mk_hourly(2), "daily": mk_daily(2, 270_000.0)},
+            "subagents": [
+                {"id": "sub-3", "desc": "Run cargo test in worktree", "model": "gpt-5.4-mini", "tokens": 18_300, "alive": true, "type": "verify"}
+            ],
+            "jobs": []
+        },
+        {
+            "id": "gemini-agy",
+            "name": "Gemini / Agy",
+            "kind": "antigravity",
+            "enabled": true,
+            "active": false,
+            "model": "gemini-2.5-pro",
+            "models": ["gemini-2.5-pro", "gemini-2.5-flash"],
+            "quota": [
+                {"group": "session", "pct": 22.0, "reset": t + 12_600.0},
+                {"group": "weekly", "pct": 29.0, "reset": t + 410_000.0}
+            ],
+            "effective": {"paused": false, "model": "gemini-2.5-pro"},
+            "state": {"paused": false},
+            "usage": {"today": 164_000.0, "h5": 54_000.0, "d7": 1_310_000.0, "usd_today": 0.0, "hourly": mk_hourly(3), "daily": mk_daily(3, 195_000.0)},
+            "subagents": [],
+            "jobs": []
+        },
+        {
+            "id": "deepseek-api",
+            "name": "DeepSeek API",
+            "kind": "deepseek",
+            "enabled": true,
+            "active": false,
+            "model": "deepseek-chat",
+            "models": ["deepseek-chat", "deepseek-reasoner"],
+            "balance": {"amount": 14.82, "currency": "USD"},
+            "quota": [],
+            "effective": {"paused": false, "model": "deepseek-chat"},
+            "state": {"paused": false},
+            "usage": {"today": 198_000.0, "h5": 62_000.0, "d7": 1_620_000.0, "usd_today": 0.42, "hourly": mk_hourly(4), "daily": mk_daily(4, 210_000.0)},
+            "subagents": [],
+            "jobs": []
+        },
+        {
+            "id": "ollama-local",
+            "name": "Ollama Local",
+            "kind": "ollama",
+            "enabled": true,
+            "active": false,
+            "model": "qwen2.5-coder:32b",
+            "models": ["qwen2.5-coder:32b", "deepseek-r1:14b"],
+            "quota": [],
+            "effective": {"paused": false, "model": "qwen2.5-coder:32b"},
+            "state": {"paused": false},
+            "usage": {"today": 88_000.0, "h5": 21_000.0, "d7": 720_000.0, "usd_today": 0.0, "hourly": mk_hourly(5), "daily": mk_daily(5, 110_000.0)},
+            "subagents": [],
+            "jobs": []
         }
-        if bs.len() > 2 {
-            let to = bs[2].s("id");
-            bs[0]["jobs"] = json!([{"to": to, "task": "Escribir pruebas", "alive": true}]);
-        }
-    }
-    snap
+    ]);
+
+    let snap = json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "mode": "normal",
+        "overall": "OK",
+        "machine": {"cpu": 24.0, "ram": 48.0},
+        "brains": brains,
+        "chain": [
+            {"id": "claude-work", "name": "Claude Work", "available": true, "master": true, "reason": "available", "rank": 1},
+            {"id": "codex-cli", "name": "Codex CLI", "available": true, "master": false, "reason": "available", "rank": 2},
+            {"id": "gemini-agy", "name": "Gemini / Agy", "available": true, "master": false, "reason": "available", "rank": 2},
+            {"id": "deepseek-api", "name": "DeepSeek API", "available": true, "master": false, "reason": "available", "rank": 3},
+            {"id": "ollama-local", "name": "Ollama Local", "available": true, "master": false, "reason": "available", "rank": 4}
+        ],
+        "alarms": [],
+        "diary": [
+            {"ts": t - 920.0, "who": "Router", "level": "info", "text": "Adaptive router selected DeepSeek API for log-parser cleanup (saved ~38k Opus-eq tokens)"},
+            {"ts": t - 410.0, "who": "Parallel", "level": "info", "text": "Parallel DAG started: Migrate auth to OAuth2 PKCE (3 branches across Claude Work, Codex CLI, Gemini)"},
+            {"ts": t - 95.0, "who": "Verify", "level": "info", "text": "Branch B2 (Codex CLI) passed `cargo test` inside isolated git worktree"}
+        ],
+        "rules": {"downgrade_at": 80.0, "pause_at": 100.0}
+    });
+
+    let tasks = json!({
+        "tasks": [
+            {
+                "id": "demo-run-oauth",
+                "title": "Migrate auth to OAuth2 PKCE",
+                "brain": "claude-work",
+                "brain_name": "Claude Work",
+                "model": "claude-sonnet-4-6",
+                "status": "running",
+                "mode": "build",
+                "cwd": "/workspace/acme-api",
+                "worktree": true,
+                "branch": "mb/demo-run-oauth",
+                "created": t - 420.0,
+                "updated": t - 12.0,
+                "tokens": 84_000,
+                "usd": 0.0,
+                "kind": "parallel",
+                "parent_run": ""
+            },
+            {
+                "id": "demo-b1",
+                "title": "Map existing session middleware & RFC 7636 spec",
+                "brain": "gemini-agy",
+                "brain_name": "Gemini / Agy",
+                "model": "gemini-2.5-pro",
+                "status": "done",
+                "mode": "plan",
+                "cwd": "/workspace/acme-api",
+                "created": t - 415.0,
+                "updated": t - 210.0,
+                "tokens": 28_400,
+                "parent_run": "demo-run-oauth"
+            },
+            {
+                "id": "demo-b2",
+                "title": "Implement PKCE challenge verifier & unit tests",
+                "brain": "codex-cli",
+                "brain_name": "Codex CLI",
+                "model": "gpt-5.4",
+                "status": "running",
+                "mode": "build",
+                "cwd": "/workspace/acme-api",
+                "worktree": true,
+                "branch": "mb/demo-b2",
+                "created": t - 205.0,
+                "updated": t - 18.0,
+                "tokens": 39_100,
+                "parent_run": "demo-run-oauth"
+            },
+            {
+                "id": "demo-b3",
+                "title": "Security review & final worktree merge check",
+                "brain": "claude-work",
+                "brain_name": "Claude Work",
+                "model": "claude-opus-4-6",
+                "status": "queued",
+                "mode": "plan",
+                "cwd": "/workspace/acme-api",
+                "created": t - 200.0,
+                "updated": t - 15.0,
+                "tokens": 0,
+                "parent_run": "demo-run-oauth"
+            },
+            {
+                "id": "demo-sql-index",
+                "title": "Optimize Postgres ledger query indexes",
+                "brain": "deepseek-api",
+                "brain_name": "DeepSeek API",
+                "model": "deepseek-chat",
+                "status": "done",
+                "mode": "build",
+                "cwd": "/workspace/acme-api",
+                "created": t - 3_600.0,
+                "updated": t - 3_120.0,
+                "tokens": 42_500,
+                "usd": 0.06,
+                "parent_run": ""
+            }
+        ],
+        "queue": {"running": 2, "queued": 1}
+    });
+
+    let parallel_runs = vec![crate::parallel::ParallelRun {
+        id: "demo-run-oauth".into(),
+        prompt: "Migrate auth to OAuth2 PKCE with isolated worktree tests".into(),
+        cwd: "/workspace/acme-api".into(),
+        mode: "build".into(),
+        worktree: true,
+        strategy: "dag".into(),
+        director: "claude-work".into(),
+        director_name: "Claude Work".into(),
+        status: "running".into(),
+        waves_total: 3,
+        branches: vec![
+            crate::parallel::BranchState {
+                id: "b1".into(),
+                title: "Map session middleware & PKCE spec".into(),
+                role: "analyze".into(),
+                tier: 2,
+                mode: "plan".into(),
+                deps: vec![],
+                files: vec!["src/auth/session.rs".into()],
+                prompt: "Inspect session store".into(),
+                worktree: false,
+                task_id: "demo-b1".into(),
+                brain: "gemini-agy".into(),
+                brain_name: "Gemini / Agy".into(),
+                model: "gemini-2.5-pro".into(),
+                status: "done".into(),
+                summary: "Mapped 3 session entrypoints and token TTL constraints.".into(),
+                tokens: 28_400,
+                usd: 0.0,
+                error: String::new(),
+                wave: 0,
+                started_at: t - 415.0,
+                finished_at: t - 210.0,
+            },
+            crate::parallel::BranchState {
+                id: "b2".into(),
+                title: "Implement PKCE verifier & tests".into(),
+                role: "implement".into(),
+                tier: 1,
+                mode: "build".into(),
+                deps: vec!["b1".into()],
+                files: vec!["src/auth/pkce.rs".into()],
+                prompt: "Implement S256 verifier".into(),
+                worktree: true,
+                task_id: "demo-b2".into(),
+                brain: "codex-cli".into(),
+                brain_name: "Codex CLI".into(),
+                model: "gpt-5.4".into(),
+                status: "running".into(),
+                summary: "Passing 14/14 unit tests in isolated worktree.".into(),
+                tokens: 39_100,
+                usd: 0.0,
+                error: String::new(),
+                wave: 1,
+                started_at: t - 205.0,
+                finished_at: 0.0,
+            },
+            crate::parallel::BranchState {
+                id: "b3".into(),
+                title: "Security review & merge readiness".into(),
+                role: "review".into(),
+                tier: 1,
+                mode: "plan".into(),
+                deps: vec!["b2".into()],
+                files: vec![],
+                prompt: "Audit diff".into(),
+                worktree: false,
+                task_id: "demo-b3".into(),
+                brain: "claude-work".into(),
+                brain_name: "Claude Work".into(),
+                model: "claude-opus-4-6".into(),
+                status: "pending".into(),
+                summary: String::new(),
+                tokens: 0,
+                usd: 0.0,
+                error: String::new(),
+                wave: 2,
+                started_at: 0.0,
+                finished_at: 0.0,
+            },
+        ],
+        total_tokens: 67_500,
+        total_usd: 0.0,
+        created: t - 420.0,
+        updated: t - 12.0,
+        error: String::new(),
+    }];
+
+    let savings_daily: Vec<Value> = (0..14)
+        .map(|i| {
+            let per_turn = 14_200.0 - (i as f64) * 380.0 + ((i % 3) as f64) * 410.0;
+            json!({
+                "day": format!("D-{:02}", 14 - i),
+                "per_turn": per_turn,
+            })
+        })
+        .collect();
+    let savings = json!({
+        "relay_saved_tokens": 418_000.0,
+        "routing_saved_tokens": 1_240_000.0,
+        "sessions": 64,
+        "relays": [{}, {}, {}, {}, {}, {}, {}],
+        "routing": {"routed_tasks": 47},
+        "daily": savings_daily
+    });
+
+    (snap, tasks, parallel_runs, savings)
 }

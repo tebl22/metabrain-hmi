@@ -387,17 +387,17 @@ pub fn num(n: f64) -> String {
     }
 }
 
-/// "hace 3 min" style age from a unix timestamp.
+/// "3m ago" style age from a unix timestamp.
 pub fn ago(now: f64, ts: f64) -> String {
     let s = (now - ts).max(0.0);
     if s < 60.0 {
-        "ahora".into()
+        "now".into()
     } else if s < 3600.0 {
-        format!("hace {:.0} min", s / 60.0)
+        format!("{:.0}m ago", s / 60.0)
     } else if s < 86400.0 {
-        format!("hace {:.0} h", s / 3600.0)
+        format!("{:.0}h ago", s / 3600.0)
     } else {
-        format!("hace {:.0} d", s / 86400.0)
+        format!("{:.0}d ago", s / 86400.0)
     }
 }
 

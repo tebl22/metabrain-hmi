@@ -73,9 +73,9 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui, snap: &Value, pending: usize) {
                 p.circle_filled(r.center(), 3.0, RUN);
                 if resp
                     .on_hover_text(if app.ui.nav_open {
-                        "Contraer menú"
+                        "Collapse menu"
                     } else {
-                        "Expandir menú"
+                        "Expand menu"
                     })
                     .clicked()
                 {
@@ -779,7 +779,7 @@ pub fn palette(app: &mut App, ctx: &egui::Context, snap: &Value) {
             }
         } else {
             app.act(r);
-            app.say("Hecho", RUN);
+            app.say("Done", RUN);
         }
     } else {
         app.ui.palette = Some(q);

@@ -309,7 +309,7 @@ impl Graph {
                 .prompt
                 .lines()
                 .next()
-                .unwrap_or("Orquestación")
+                .unwrap_or("Orchestration")
                 .chars()
                 .take(40)
                 .collect();
@@ -319,7 +319,7 @@ impl Graph {
                 &parent_id,
                 run_title,
                 format!(
-                    "Orquestación · {done_n}/{total_n} agentes · Ola {cur_wave}/{}",
+                    "Orchestration · {done_n}/{total_n} agents · Wave {cur_wave}/{}",
                     run.waves_total.max(1)
                 ),
                 if run_live { INFO } else { MASTER },
@@ -354,14 +354,7 @@ impl Graph {
                     oid.clone()
                 };
                 let br_id = format!("br:{}:{}", run.id, br.id);
-                let role_es = match br.role.as_str() {
-                    "explore" => "explora",
-                    "analyze" => "analiza",
-                    "review" => "revisa",
-                    "implement" => "implementa",
-                    "synthesize" => "síntesis",
-                    other => other,
-                };
+                let role_lbl = br.role.as_str();
                 let model_s = if br.model.is_empty() {
                     String::new()
                 } else {
@@ -373,11 +366,11 @@ impl Graph {
                     &br_parent,
                     br.title.clone(),
                     format!(
-                        "Subchat Ola {} · T{} · {role_es} · {}{model_s}",
+                        "Subchat Wave {} · T{} · {role_lbl} · {}{model_s}",
                         br.wave + 1,
                         br.tier,
                         if br.brain_name.is_empty() {
-                            "esperando cerebro"
+                            "awaiting brain"
                         } else {
                             br.brain_name.as_str()
                         }
@@ -389,7 +382,7 @@ impl Graph {
                         task_id: br.task_id.clone(),
                         run_id: run.id.clone(),
                         wave: br.wave + 1,
-                        role: role_es.into(),
+                        role: role_lbl.into(),
                         brain_name: br.brain_name.clone(),
                         model: br.model.clone(),
                     },
@@ -613,24 +606,17 @@ pub(super) fn map(
                     )
                     .on_hover_text(tip)
                 };
-                if btn(ui, "−", 22.0, "Alejar (Ctrl + rueda abajo)").clicked() {
+                if btn(ui, "−", 22.0, "Zoom out (Ctrl + scroll down)").clicked() {
                     g.zoom = (g.zoom / 1.2).clamp(0.45, 2.4);
                     zoom_bar_hit = true;
                 }
                 let pct_txt = format!("{:.0}%", g.zoom * 100.0);
-                if btn(
-                    ui,
-                    &pct_txt,
-                    46.0,
-                    "Restablecer zoom y centrar (doble clic)",
-                )
-                .clicked()
-                {
+                if btn(ui, &pct_txt, 46.0, "Reset zoom & center (double-click)").clicked() {
                     g.zoom = 1.0;
                     g.pan = Vec2::ZERO;
                     zoom_bar_hit = true;
                 }
-                if btn(ui, "+", 22.0, "Acercar (Ctrl + rueda arriba)").clicked() {
+                if btn(ui, "+", 22.0, "Zoom in (Ctrl + scroll up)").clicked() {
                     g.zoom = (g.zoom * 1.2).clamp(0.45, 2.4);
                     zoom_bar_hit = true;
                 }
@@ -912,7 +898,7 @@ pub(super) fn map(
                     INK,
                 );
                 if is_hover {
-                    tip = Some("Resumen general, alarmas y diario".into());
+                    tip = Some("Overview, alarms, and activity log".into());
                 }
             }
             NodeData::Brain {
@@ -1027,7 +1013,7 @@ pub(super) fn map(
                 );
                 let bal_txt = balance_text_snap(b);
                 if has_windows {
-                    for (offset, label, value) in [(-0.08, "5 h", session), (0.21, "Sem", week)] {
+                    for (offset, label, value) in [(-0.08, "5h", session), (0.21, "Wk", week)] {
                         let amount = value.map_or_else(|| "–".into(), |v| format!("{v:.0}%"));
                         p.text(
                             Pos2::new(at.x, at.y + r * offset),
@@ -1076,7 +1062,7 @@ pub(super) fn map(
                     p.text(
                         br.center(),
                         egui::Align2::CENTER_CENTER,
-                        format!("N{rank}"),
+                        format!("T{rank}"),
                         medium((10.0 * scale.max(0.85)).max(8.5)),
                         if master {
                             Color32::from_rgb(0x1C, 0x16, 0x0A)
@@ -1103,7 +1089,7 @@ pub(super) fn map(
                 if is_hover {
                     let mut s = match pct {
                         Some(v) => format!(
-                            "{}: {:.0} % usado · queda {:.0} % ({glabel})",
+                            "{}: {:.0}% used · {:.0}% left ({glabel})",
                             nd.label,
                             v,
                             (100.0 - v).clamp(0.0, 100.0)
@@ -1111,12 +1097,12 @@ pub(super) fn map(
                         None => format!("{}: – ({glabel})", nd.label),
                     };
                     if let Some(rs) = reset {
-                        s += &format!(", vuelve a las {}", hhmm(rs));
+                        s += &format!(", resets at {}", hhmm(rs));
                     }
                     if has_windows {
-                        s += "\nExterior: sesión de 5 h · Interior: semana";
+                        s += "\nOuter ring: 5h session · Inner ring: weekly";
                     }
-                    tip = Some(s + ". Clic para ver su detalle y jerarquía.");
+                    tip = Some(s + ". Click to inspect details and hierarchy.");
                 }
             }
             NodeData::Orchestration {
@@ -1167,7 +1153,7 @@ pub(super) fn map(
                 let badge = if *total > 0 {
                     format!("{done}/{total}")
                 } else {
-                    format!("O{wave}")
+                    format!("W{wave}")
                 };
                 p.text(
                     at,
@@ -1195,7 +1181,7 @@ pub(super) fn map(
                 }
                 if is_hover {
                     tip = Some(format!(
-                        "Orquestación paralela: {}\n{} agentes ({} activos) · Ola {wave}/{waves_total}\nClic para abrir el chat principal.",
+                        "Parallel orchestration: {}\n{} agents ({} active) · Wave {wave}/{waves_total}\nClick to open the main thread.",
                         nd.label, total, active
                     ));
                 }
@@ -1220,7 +1206,7 @@ pub(super) fn map(
                 p.text(
                     at,
                     egui::Align2::CENTER_CENTER,
-                    format!("O{wave}"),
+                    format!("W{wave}"),
                     mono((8.0 * zoom).clamp(6.5, 11.0)),
                     col,
                 );
@@ -1248,10 +1234,10 @@ pub(super) fn map(
                         format!(" ({})", model_label(model))
                     };
                     tip = Some(format!(
-                        "Subchat · {}\nOla {wave} · {role} · {}{m}\nClic para abrir este subchat.",
+                        "Subchat · {}\nWave {wave} · {role} · {}{m}\nClick to open this subchat.",
                         nd.label,
                         if brain_name.is_empty() {
-                            "esperando cerebro"
+                            "awaiting brain"
                         } else {
                             brain_name.as_str()
                         }
@@ -1319,9 +1305,9 @@ pub(super) fn map(
     if let Some((run_id, active_n, done_n, total_n)) = active_orch {
         if drawer_rect.is_none() && rect.width() > 360.0 {
             let hud_txt = if active_n > 0 {
-                format!("Orquestando · {active_n} agentes activos ({done_n}/{total_n})")
+                format!("Orchestrating · {active_n} active agents ({done_n}/{total_n})")
             } else {
-                format!("Orquestando · {done_n}/{total_n} subchats")
+                format!("Orchestrating · {done_n}/{total_n} subchats")
             };
             let hud_w = (hud_txt.len() as f32 * 6.4 + 34.0)
                 .min(rect.width() - 150.0)
@@ -1337,7 +1323,7 @@ pub(super) fn map(
                     Sense::click(),
                 )
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text("Clic para abrir la orquestación en Chat");
+                .on_hover_text("Click to open orchestration in Chat");
             p.rect(
                 hud_rect,
                 CornerRadius::same(13),
@@ -1372,9 +1358,9 @@ pub(super) fn map(
     let ly = rect.max.y - 16.0;
     let mut lx = rect.min.x + 14.0;
     for (c, t_lbl, filled) in [
-        (RUN, "subagente", true),
+        (RUN, "subagent", true),
         (RUN, "chat", false),
-        (INFO, "orquestación", false),
+        (INFO, "orchestration", false),
     ] {
         if filled {
             p.circle_filled(Pos2::new(lx + 5.0, ly), 4.5, c);
@@ -1387,9 +1373,9 @@ pub(super) fn map(
         lx += w + 26.0;
     }
     let hint_text = if rect.width() < 540.0 {
-        "Ctrl + rueda: zoom · rueda: bajar · doble clic: centrar"
+        "Ctrl+scroll: zoom · scroll: page · double-click: center"
     } else {
-        "Ctrl + rueda: zoom · rueda: bajar página · arrastra: mover · doble clic: centrar"
+        "Ctrl+scroll: zoom · scroll: page · drag: pan · double-click: center"
     };
     let hint = p.layout_no_wrap(hint_text.into(), body(11.0), INK3);
     let right = rect.max.x - 14.0;

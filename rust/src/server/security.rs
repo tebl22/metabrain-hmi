@@ -293,7 +293,20 @@ pub(super) fn safe_upload_dir(cwd: &str) -> PathBuf {
     {
         let unix_canon = canon.to_string_lossy();
         for blocked in [
-            "/etc", "/usr", "/bin", "/sbin", "/lib", "/boot", "/proc", "/sys", "/dev",
+            "/etc",
+            "/usr",
+            "/bin",
+            "/sbin",
+            "/lib",
+            "/boot",
+            "/proc",
+            "/sys",
+            "/dev",
+            "/System",
+            "/Library",
+            "/Applications",
+            "/private/etc",
+            "/private/var",
         ] {
             if unix_canon == blocked || unix_canon.starts_with(&format!("{blocked}/")) {
                 return fallback;

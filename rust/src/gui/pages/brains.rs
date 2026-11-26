@@ -73,8 +73,8 @@ fn spec(c: Choice) -> Spec {
     };
     match c {
         Choice::Claude => s(
-            "Cuenta de Claude",
-            "Tu suscripción Pro o Max. Inicias sesión en el navegador.",
+            "Claude Account",
+            "Your Pro or Max subscription. Sign in via browser.",
             "claude_code",
             "",
             "",
@@ -82,8 +82,8 @@ fn spec(c: Choice) -> Spec {
             "claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5",
         ),
         Choice::Google => s(
-            "Cuenta de Google",
-            "Gemini con tu cuenta de Google, sin pagar API.",
+            "Google Account",
+            "Gemini with your Google account, no API billing.",
             "antigravity",
             "",
             "",
@@ -91,8 +91,8 @@ fn spec(c: Choice) -> Spec {
             "",
         ),
         Choice::ChatGpt => s(
-            "Cuenta de ChatGPT",
-            "Tu suscripción de ChatGPT, a través de Codex.",
+            "ChatGPT Account",
+            "Your ChatGPT subscription via Codex CLI.",
             "codex",
             "",
             "",
@@ -101,7 +101,7 @@ fn spec(c: Choice) -> Spec {
         ),
         Choice::DeepSeek => s(
             "DeepSeek",
-            "El obrero más barato. Pegas tu clave de API.",
+            "Ultra-low-cost workhorse. Paste your API key.",
             "openai",
             "https://api.deepseek.com",
             "DEEPSEEK_API_KEY",
@@ -109,8 +109,8 @@ fn spec(c: Choice) -> Spec {
             "deepseek-flash, deepseek-v4-pro",
         ),
         Choice::GeminiApi => s(
-            "Gemini por API",
-            "Clave gratuita de Google AI Studio.",
+            "Gemini API",
+            "Free or pay-as-you-go key from Google AI Studio.",
             "openai",
             "https://generativelanguage.googleapis.com/v1beta/openai",
             "GEMINI_API_KEY",
@@ -119,7 +119,7 @@ fn spec(c: Choice) -> Spec {
         ),
         Choice::OpenRouter => s(
             "OpenRouter",
-            "Cientos de modelos con una sola clave.",
+            "Hundreds of models behind a single API key.",
             "openai",
             "https://openrouter.ai/api/v1",
             "OPENROUTER_API_KEY",
@@ -128,7 +128,7 @@ fn spec(c: Choice) -> Spec {
         ),
         Choice::Groq => s(
             "Groq",
-            "Modelos abiertos, muy rápidos.",
+            "Ultra-fast inference for open models.",
             "openai",
             "https://api.groq.com/openai/v1",
             "GROQ_API_KEY",
@@ -137,7 +137,7 @@ fn spec(c: Choice) -> Spec {
         ),
         Choice::OpenAi => s(
             "OpenAI API",
-            "Pago por uso con clave de OpenAI.",
+            "Pay-as-you-go with an OpenAI API key.",
             "openai",
             "https://api.openai.com/v1",
             "OPENAI_API_KEY",
@@ -146,7 +146,7 @@ fn spec(c: Choice) -> Spec {
         ),
         Choice::Anthropic => s(
             "Anthropic API",
-            "Claude pagando por uso, con clave.",
+            "Pay-as-you-go Claude with an Anthropic API key.",
             "anthropic",
             "https://api.anthropic.com",
             "ANTHROPIC_API_KEY",
@@ -154,8 +154,8 @@ fn spec(c: Choice) -> Spec {
             "claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5",
         ),
         Choice::Ollama => s(
-            "Modelos en tu PC",
-            "Ollama: gratis y privado, usa tu tarjeta gráfica.",
+            "Local Models",
+            "Ollama: free and private, runs on your GPU.",
             "ollama",
             "http://127.0.0.1:11434",
             "",
@@ -191,9 +191,9 @@ pub(super) fn brains(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
     let list = snap.arr("brains");
     let cfg = app.sup.cfg.get();
     ui.horizontal(|ui| {
-        ui.label(dim(format!("{} cerebros conectados", list.len())));
+        ui.label(dim(format!("{} brains connected", list.len())));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if app.ui.wizard.is_none() && primary(ui, "Conectar otro cerebro").clicked() {
+            if app.ui.wizard.is_none() && primary(ui, "Connect another brain").clicked() {
                 app.ui.wizard = Some(Wizard::default());
             }
         });
@@ -224,7 +224,7 @@ pub(super) fn brains(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let id = b.s("id");
                     if app.ui.confirm_remove.as_deref() == Some(id.as_str()) {
-                        if danger(ui, "Sí, quitar").clicked() {
+                        if danger(ui, "Yes, remove").clicked() {
                             let mut c = app.sup.cfg.get();
                             if let Some(arr) = c.get_mut("brains").and_then(|v| v.as_array_mut()) {
                                 arr.retain(|x| x.s("id") != id);
@@ -233,22 +233,22 @@ pub(super) fn brains(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                             app.ui.confirm_remove = None;
                             app.say(
                                 if r == "ok" {
-                                    format!("Quitado {}", b.s("name"))
+                                    format!("Removed {}", b.s("name"))
                                 } else {
                                     r
                                 },
                                 ATTN,
                             );
                         }
-                        if quiet(ui, "Cancelar").clicked() {
+                        if quiet(ui, "Cancel").clicked() {
                             app.ui.confirm_remove = None;
                         }
-                    } else if quiet(ui, "Quitar").clicked() {
+                    } else if quiet(ui, "Remove").clicked() {
                         app.ui.confirm_remove = Some(id.clone());
                     }
                     chip(
                         ui,
-                        if ok { "Conectado" } else { "Sin conectar" },
+                        if ok { "Connected" } else { "Disconnected" },
                         if ok { RUN } else { ATTN },
                     );
                 });
@@ -268,30 +268,30 @@ pub(super) fn brains(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                 let label = match kind.as_str() {
                     "claude_code" => {
                         if ok {
-                            "Cambiar de cuenta"
+                            "Switch account"
                         } else {
-                            "Iniciar sesión"
+                            "Sign in"
                         }
                     }
                     "antigravity" => {
                         if ok {
                             ""
                         } else {
-                            "Iniciar sesión con Google"
+                            "Sign in with Google"
                         }
                     }
                     "codex" => {
                         if ok {
                             ""
                         } else {
-                            "Iniciar sesión con ChatGPT"
+                            "Sign in with ChatGPT"
                         }
                     }
                     "openai" | "anthropic" => {
                         if ok {
-                            "Cambiar clave"
+                            "Update key"
                         } else {
-                            "Pegar clave"
+                            "Paste API key"
                         }
                     }
                     _ => "",
@@ -311,7 +311,7 @@ pub(super) fn brains(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                             ) {
                                 app.say(e, ALARM);
                             } else {
-                                app.say("Se abrió el inicio de sesión de Claude", INFO);
+                                app.say("Opened Claude sign-in window", INFO);
                             }
                         }
                         "antigravity" => {
@@ -347,10 +347,10 @@ pub(super) fn brains(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                 .filter_map(|v| v.as_str().map(crate::gui::home::model_label))
                 .collect();
             ui.horizontal_wrapped(|ui| {
-                ui.label(faint("Modelos"));
+                ui.label(faint("Models"));
                 ui.label(
                     egui::RichText::new(if models.is_empty() {
-                        "el que elija el agente".into()
+                        "agent default".into()
                     } else {
                         models.join("  ›  ")
                     })
@@ -360,15 +360,15 @@ pub(super) fn brains(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
             });
             let budget = b.get("budget").cloned().unwrap_or(Value::Null);
             ui.horizontal_wrapped(|ui| {
-                ui.label(faint("Límite diario"));
+                ui.label(faint("Daily limit"));
                 let tok = budget
                     .f("tokens_day")
                     .map(num)
-                    .unwrap_or_else(|| "sin límite".into());
+                    .unwrap_or_else(|| "unlimited".into());
                 let usd = budget
                     .f("usd_day")
                     .map(|u| format!("{u:.2} USD"))
-                    .unwrap_or_else(|| "sin límite".into());
+                    .unwrap_or_else(|| "unlimited".into());
                 ui.label(
                     egui::RichText::new(format!("{tok} tokens · {usd}"))
                         .font(mono(12.0))
@@ -384,11 +384,11 @@ pub(super) fn brains(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
             {
                 ui.horizontal(|ui| {
                     ui.label(
-                        egui::RichText::new(crate::l10n::es(&rec.s("text")))
+                        egui::RichText::new(rec.s("text"))
                             .font(body(12.5))
                             .color(level_color(&rec.s("level"))),
                     );
-                    if quiet(ui, "Aplicar").clicked() {
+                    if quiet(ui, "Apply").clicked() {
                         app.act(json!({"a": "apply_rec", "brain": b.s("id"), "rec": rec.s("id")}));
                     }
                 });
@@ -400,25 +400,19 @@ pub(super) fn brains(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
 
 fn kind_label(k: &str) -> &'static str {
     match k {
-        "claude_code" => "Cuenta de Claude",
-        "antigravity" => "Cuenta de Google",
-        "codex" => "Cuenta de ChatGPT",
+        "claude_code" => "Claude Account",
+        "antigravity" => "Google Account",
+        "codex" => "ChatGPT Account",
         "openai" => "API",
-        "anthropic" => "API de Anthropic",
-        "ollama" => "En tu PC",
+        "anthropic" => "Anthropic API",
+        "ollama" => "Local GPU",
         "gemini_cli" => "Gemini CLI",
-        _ => "Cerebro",
+        _ => "Brain",
     }
 }
 
 fn role_label(r: &str) -> &str {
-    match r {
-        "director" => "director",
-        "producer" => "productor",
-        "worker" => "obrero",
-        "local" => "local",
-        x => x,
-    }
+    r
 }
 
 fn guess_choice(b: &Value) -> Choice {
@@ -453,14 +447,14 @@ fn wizard(app: &mut App, ui: &mut egui::Ui, list: &[Value]) {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 if w.choice != Choice::None
-                    && icon_button(ui, Icon::Up, "Volver", false, true).clicked()
+                    && icon_button(ui, Icon::Up, "Back", false, true).clicked()
                 {
                     w = Wizard::default();
                     crate::connect::google_reset();
                 }
                 ui.label(
                     egui::RichText::new(if w.choice == Choice::None {
-                        "¿Qué quieres conectar?".to_string()
+                        "What would you like to connect?".to_string()
                     } else {
                         spec(w.choice).title.to_string()
                     })
@@ -468,7 +462,7 @@ fn wizard(app: &mut App, ui: &mut egui::Ui, list: &[Value]) {
                     .color(INK),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if icon_button(ui, Icon::Close, "Cerrar", false, true).clicked() {
+                    if icon_button(ui, Icon::Close, "Close", false, true).clicked() {
                         close = true;
                     }
                 });
@@ -493,11 +487,11 @@ fn wizard(app: &mut App, ui: &mut egui::Ui, list: &[Value]) {
 fn choose(ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]) {
     let groups: [(&str, &[Choice]); 3] = [
         (
-            "Con tu cuenta (sin pagar API)",
+            "Subscription accounts (no per-token API billing)",
             &[Choice::Claude, Choice::Google, Choice::ChatGpt],
         ),
         (
-            "Con clave de API (pago por uso, muy barato)",
+            "API key (pay-as-you-go)",
             &[
                 Choice::DeepSeek,
                 Choice::GeminiApi,
@@ -507,7 +501,7 @@ fn choose(ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]) {
                 Choice::Anthropic,
             ],
         ),
-        ("En tu computadora", &[Choice::Ollama]),
+        ("Local hardware", &[Choice::Ollama]),
     ];
     let cols = if ui.available_width() > 900.0 {
         3
@@ -621,17 +615,17 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
             step(
                 ui,
                 1,
-                "Abre el inicio de sesión",
-                "Se abre una ventana de Claude Code; elige tu cuenta y acepta en el navegador.",
+                "Open sign-in",
+                "Opens a Claude Code terminal; pick your account and approve in the browser.",
             );
             ui.horizontal(|ui| {
                 ui.add_space(30.0);
                 if primary(
                     ui,
                     if w.login_opened {
-                        "Abrir de nuevo"
+                        "Open again"
                     } else {
-                        "Iniciar sesión en Claude"
+                        "Sign in to Claude"
                     },
                 )
                 .clicked()
@@ -643,7 +637,12 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
                 }
             });
             ui.add_space(8.0);
-            step(ui, 2, "Vuelve aquí", "MetaBrain detecta la sesión sola.");
+            step(
+                ui,
+                2,
+                "Return here",
+                "MetaBrain detects the session automatically.",
+            );
             ui.horizontal(|ui| {
                 ui.add_space(30.0);
                 match &email {
@@ -651,9 +650,9 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
                         chip(
                             ui,
                             &if e.is_empty() {
-                                "Sesión iniciada".to_string()
+                                "Signed in".to_string()
                             } else {
-                                format!("Conectado: {e}")
+                                format!("Connected: {e}")
                             },
                             RUN,
                         );
@@ -661,9 +660,9 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
                     None => {
                         ui.spinner();
                         ui.label(faint(if w.login_opened {
-                            "Esperando a que termines de iniciar sesión…"
+                            "Waiting for sign-in to complete…"
                         } else {
-                            "Aún sin sesión"
+                            "Not signed in yet"
                         }));
                     }
                 }
@@ -703,8 +702,8 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
             step(
                 ui,
                 if installed { 1 } else { 2 },
-                "Inicia sesión con Google",
-                "Se abre tu navegador; acepta y Google te muestra un código.",
+                "Sign in with Google",
+                "Opens your browser; approve access and Google will display a verification code.",
             );
             ui.horizontal(|ui| {
                 ui.add_space(30.0);
@@ -714,7 +713,7 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
                             .add_enabled(
                                 installed,
                                 egui::Button::new(
-                                    egui::RichText::new("Iniciar sesión con Google")
+                                    egui::RichText::new("Sign in with Google")
                                         .font(medium(13.0))
                                         .color(Color32::from_rgb(0x1C, 0x16, 0x0A)),
                                 )
@@ -727,7 +726,7 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
                     }
                     crate::connect::Google::Starting => {
                         ui.spinner();
-                        ui.label(faint("Abriendo Google…"));
+                        ui.label(faint("Opening Google…"));
                     }
                     _ => {}
                 }
@@ -740,8 +739,8 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
                 step(
                     ui,
                     if installed { 2 } else { 3 },
-                    "Pega el código",
-                    "Cópialo de la página de Google y pégalo aquí.",
+                    "Paste the code",
+                    "Copy the code from the Google page and paste it below.",
                 );
                 ui.horizontal_wrapped(|ui| {
                     ui.add_space(30.0);
@@ -753,12 +752,12 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
                             .font(mono(13.0)),
                     );
                     let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    if (primary(ui, "Conectar").clicked() || enter) && !w.code.trim().is_empty() {
+                    if (primary(ui, "Connect").clicked() || enter) && !w.code.trim().is_empty() {
                         if let Err(e) = crate::connect::google_code(&w.code) {
                             w.err = e;
                         }
                     }
-                    if quiet(ui, "Abrir la página otra vez").clicked() {
+                    if quiet(ui, "Open page again").clicked() {
                         crate::app::open_browser(url);
                     }
                 });
@@ -767,8 +766,8 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
                 ui.horizontal(|ui| {
                     ui.add_space(30.0);
                     ui.spinner();
-                    ui.label(faint("Se abrió una ventana de Antigravity: elige iniciar sesión con Google y acepta en el navegador. Esto se actualiza solo."));
-                    if quiet(ui, "Cancelar").clicked() {
+                    ui.label(faint("An Antigravity window opened: sign in with Google and approve in your browser. Status updates automatically."));
+                    if quiet(ui, "Cancel").clicked() {
                         crate::connect::google_reset();
                     }
                 });
@@ -776,7 +775,7 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
             if logged {
                 ui.horizontal(|ui| {
                     ui.add_space(30.0);
-                    chip(ui, "Cuenta de Google conectada", RUN);
+                    chip(ui, "Google account connected", RUN);
                 });
             }
             ready = logged;
@@ -791,23 +790,23 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
                 step(
                     ui,
                     1,
-                    "Instala Codex",
-                    "La herramienta oficial de OpenAI para usar ChatGPT desde aquí.",
+                    "Install Codex CLI",
+                    "Official OpenAI CLI to use your ChatGPT subscription from MetaBrain.",
                 );
                 ui.horizontal(|ui| {
                     ui.add_space(30.0);
-                    if primary(ui, "Instalar").clicked() {
+                    if primary(ui, "Install").clicked() {
                         #[cfg(windows)]
                         let _ = std::process::Command::new("cmd")
                             .args([
                                 "/d",
                                 "/c",
                                 "start",
-                                "Instalar Codex",
+                                "Install Codex",
                                 "cmd",
                                 "/d",
                                 "/k",
-                                "npm install -g @openai/codex && echo Listo. Cierra esta ventana.",
+                                "npm install -g @openai/codex && echo Done. You may close this window.",
                             ])
                             .spawn();
                         #[cfg(not(windows))]
@@ -826,8 +825,8 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
             step(
                 ui,
                 if installed { 1 } else { 2 },
-                "Inicia sesión con la cuenta que quieras",
-                "Se abre tu navegador; entra con la cuenta de ChatGPT que usará este cerebro.",
+                "Sign in with your account",
+                "Opens your browser; sign in with the ChatGPT account for this brain.",
             );
             ui.horizontal(|ui| {
                 ui.add_space(30.0);
@@ -836,9 +835,9 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
                         chip(
                             ui,
                             &if e.is_empty() {
-                                "Cuenta conectada".to_string()
+                                "Account connected".to_string()
                             } else {
-                                format!("Conectado: {e}")
+                                format!("Connected: {e}")
                             },
                             RUN,
                         );
@@ -849,9 +848,9 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
                                 installed,
                                 egui::Button::new(
                                     egui::RichText::new(if w.login_opened {
-                                        "Abrir de nuevo"
+                                        "Open again"
                                     } else {
-                                        "Iniciar sesión con ChatGPT"
+                                        "Sign in with ChatGPT"
                                     })
                                     .font(medium(13.0))
                                     .color(Color32::from_rgb(0x1C, 0x16, 0x0A)),
@@ -867,7 +866,7 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
                         }
                         if w.login_opened {
                             ui.spinner();
-                            ui.label(faint("Esperando a que termines en el navegador…"));
+                            ui.label(faint("Waiting for browser sign-in…"));
                         }
                     }
                 }
@@ -878,7 +877,7 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
                     if quiet(
                         ui,
                         &format!(
-                            "Usar la cuenta que ya está en este PC{}",
+                            "Use existing account on this PC{}",
                             if e.is_empty() {
                                 String::new()
                             } else {
@@ -1043,7 +1042,7 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
 
     ui.add_space(12.0);
     egui::CollapsingHeader::new(
-        egui::RichText::new("Opciones avanzadas")
+        egui::RichText::new("Advanced options")
             .font(medium(12.5))
             .color(INK2),
     )
@@ -1070,13 +1069,13 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
                 });
             }
         };
-        field(ui, "Nombre", &mut w.name, "");
+        field(ui, "Name", &mut w.name, "");
         ui.horizontal_wrapped(|ui| {
-            ui.add_sized([170.0, 24.0], egui::Label::new(dim("Rol")));
+            ui.add_sized([170.0, 24.0], egui::Label::new(dim("Role")));
             for (r, n) in [
                 ("director", "director"),
-                ("producer", "productor"),
-                ("worker", "obrero"),
+                ("producer", "producer"),
+                ("worker", "worker"),
                 ("local", "local"),
             ] {
                 ui.selectable_value(&mut w.role, r.to_string(), n);
@@ -1085,7 +1084,7 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
         if w.choice == Choice::Claude || w.choice == Choice::ChatGpt {
             field(
                 ui,
-                "Carpeta de la cuenta",
+                "Account directory",
                 &mut w.config_dir,
                 if w.choice == Choice::Claude {
                     "~/.claude-work"
@@ -1096,21 +1095,21 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
         }
         field(
             ui,
-            "Modelos (mejor › barato)",
+            "Models (best › cheapest)",
             &mut w.ladder,
-            "el que elija el agente",
+            "agent default",
         );
-        field(ui, "Tokens por día", &mut w.tokens_day, "sin límite");
-        field(ui, "USD por día", &mut w.usd_day, "sin límite");
+        field(ui, "Daily tokens", &mut w.tokens_day, "unlimited");
+        field(ui, "Daily USD", &mut w.usd_day, "unlimited");
     });
     ui.add_space(12.0);
 
     let mut added = false;
     ui.horizontal(|ui| {
         let label = if ready {
-            "Agregar cerebro"
+            "Add brain"
         } else {
-            "Agregar sin conectar"
+            "Add without connecting"
         };
         let r = if ready {
             primary(ui, label)
@@ -1120,7 +1119,7 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
         if r.clicked() {
             match add_from_wizard(app, w, list) {
                 Ok(name) => {
-                    app.say(format!("{name} agregado"), RUN);
+                    app.say(format!("Added {name}"), RUN);
                     crate::connect::google_reset();
                     added = true;
                 }
@@ -1128,7 +1127,7 @@ fn connect_step(app: &mut App, ui: &mut egui::Ui, w: &mut Wizard, list: &[Value]
             }
         }
         if !ready {
-            ui.label(faint("Puedes conectarlo después desde su tarjeta."));
+            ui.label(faint("You can connect it later from its card."));
         }
     });
     added

@@ -3,7 +3,16 @@
 Todos los cambios relevantes de MetaBrain HMI se documentan aquí.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y versionado semántico.
 
-## [Unreleased]
+## [1.5.0] - 2026-11-25
+
+### Added
+- **Cross-platform macOS & Linux support:** Cross-platform `Cargo.toml` dependencies, macOS LaunchAgent and Linux XDG autostart support in `app.rs`, multi-OS GitHub Actions CI/release matrix (Windows, macOS, Linux) in `.github/workflows/rust.yml`, and POSIX `install.sh` (with `--prefix`, `--archive`, `--with-hooks`, `--with-autostart`, and `--uninstall`).
+- **Zero-credential `--demo` sandbox (`MetaBrain serve --demo`):** Boots an isolated temporary sandbox with realistic simulated brains, quota rings, tasks, and savings so anyone can test MetaBrain immediately without API keys or CLIs.
+- **Clean hook uninstallation:** Added `metabrain-hook hooks uninstall [--dry-run]`, `POST /api/hooks/uninstall`, and a **Uninstall hooks** button in **Settings → Diagnostics** that removes only MetaBrain entries from Claude Code `settings.json` while preserving user-defined hooks.
+
+### Changed
+- **100% Unified English Desktop UI:** Completed English translation across all native `egui` pages (`shell`, `home`, `map`, `detail`, `hierarchy`, `brains`, `usage`, `system`, `chat`, `thread`, and `response`), while keeping bilingual Spanish/English directive recognition in `chat_intent.rs`.
+- **Documentation:** Updated `README.md` and `README.es.md` with `--demo`, macOS/Linux installation (`install.sh`), and clean hook management.
 
 ## [1.4.0] - 2026-11-24
 

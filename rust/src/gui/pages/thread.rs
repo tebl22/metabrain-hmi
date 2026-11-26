@@ -56,26 +56,20 @@ pub(super) fn thread(app: &mut App, ui: &mut egui::Ui, snap: &Value, t: &Value, 
         ui.horizontal_wrapped(|ui| {
             chip(ui, status_name(&st), status_color(&st));
             let model = if t.s("model").is_empty() {
-                "modelo por defecto".to_string()
+                "default model".to_string()
             } else {
                 crate::gui::home::model_label(&t.s("model"))
             };
             let effort = t.s("effort");
             let model = if t.s("kind") == "codex" && !effort.is_empty() {
-                let effort = match effort.as_str() {
-                    "low" => "bajo",
-                    "medium" => "medio",
-                    "high" => "alto",
-                    other => other,
-                };
-                format!("{model} · esfuerzo {effort}")
+                format!("{model} · effort {effort}")
             } else {
                 model
             };
             let total = num(t.f("tokens").unwrap_or(0.0));
             let usage = t.f("last_turn_tokens").map_or_else(
-                || format!("{total} tokens acumulados"),
-                |turn| format!("{} tokens en el último turno", num(turn)),
+                || format!("{total} total tokens"),
+                |turn| format!("{} tokens last turn", num(turn)),
             );
             let tokens = ui.label(
                 egui::RichText::new(format!("{} · {} · {usage}", t.s("brain_name"), model))
@@ -87,13 +81,13 @@ pub(super) fn thread(app: &mut App, ui: &mut egui::Ui, snap: &Value, t: &Value, 
                     .or_else(|| t.f("cached"))
                     .map_or_else(String::new, |cached| {
                         let period = if t.b("cache_breakdown_partial", false) {
-                            " desde la actualización"
+                            " since update"
                         } else {
                             ""
                         };
-                        format!(" · {} tokens de entrada en caché{period}", num(cached))
+                        format!(" · {} cached input tokens{period}", num(cached))
                     });
-            tokens.on_hover_text(format!("{total} tokens acumulados{cache}"));
+            tokens.on_hover_text(format!("{total} total tokens{cache}"));
             let dir = t
                 .os("wt_path")
                 .filter(|d| !d.is_empty())
@@ -104,15 +98,15 @@ pub(super) fn thread(app: &mut App, ui: &mut egui::Ui, snap: &Value, t: &Value, 
         });
     };
     let run_actions = |app: &mut App, ui: &mut egui::Ui| {
-        if st == "review" && primary(ui, "Aprobar").clicked() {
+        if st == "review" && primary(ui, "Approve").clicked() {
             app.post(&format!("api/tasks/{id}/approve"), json!({}), |r| {
                 (r.os("result").unwrap_or_else(|| r.s("error")), RUN)
             });
         }
-        if !t.s("wt_path").is_empty() && st != "done" && danger(ui, "Descartar").clicked() {
+        if !t.s("wt_path").is_empty() && st != "done" && danger(ui, "Discard").clicked() {
             app.ui.confirm_discard = Some(id.clone());
         }
-        if quiet(ui, "Ver cambios").clicked() {
+        if quiet(ui, "View diff").clicked() {
             let sup = app.sup.clone();
             let task_id = id.clone();
             let ctx = ui.ctx().clone();
@@ -138,8 +132,8 @@ pub(super) fn thread(app: &mut App, ui: &mut egui::Ui, snap: &Value, t: &Value, 
                 if !live {
                     run_actions(app, ui);
                 } else if interruptible
-                    && danger(ui, "Interrumpir")
-                        .on_hover_text("Detener este turno (Esc)")
+                    && danger(ui, "Stop")
+                        .on_hover_text("Stop this turn (Esc)")
                         .clicked()
                 {
                     interrupt_now = true;
@@ -165,8 +159,8 @@ pub(super) fn thread(app: &mut App, ui: &mut egui::Ui, snap: &Value, t: &Value, 
                     if !live {
                         run_actions(app, ui);
                     } else if interruptible
-                        && danger(ui, "Interrumpir")
-                            .on_hover_text("Detener este turno (Esc)")
+                        && danger(ui, "Stop")
+                            .on_hover_text("Stop this turn (Esc)")
                             .clicked()
                     {
                         interrupt_now = true;
@@ -236,7 +230,7 @@ pub(super) fn thread(app: &mut App, ui: &mut egui::Ui, snap: &Value, t: &Value, 
                         } => {
                             if status == "escalated" {
                                 ui.horizontal(|ui| {
-                                    ui.label(faint("Pasó a un cerebro más capaz:"));
+                                    ui.label(faint("Escalated to a more capable brain:"));
                                     if ui.link(escalated_to).clicked() {
                                         goto = Some(escalated_to.clone());
                                     }
@@ -317,8 +311,8 @@ pub(super) fn thread(app: &mut App, ui: &mut egui::Ui, snap: &Value, t: &Value, 
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    if quiet(ui, "Interrumpir")
-                                        .on_hover_text("Detener este turno (Esc)")
+                                    if quiet(ui, "Stop")
+                                        .on_hover_text("Stop this turn (Esc)")
                                         .clicked()
                                     {
                                         interrupt_inline = true;
@@ -400,7 +394,7 @@ fn subchat_strip(
     let Some(run) = app.sup.parallel.get(root_id) else {
         if current_id != root_id {
             ui.horizontal(|ui| {
-                if quiet(ui, "← Volver al plan paralelo").clicked() {
+                if quiet(ui, "← Back to parallel plan").clicked() {
                     *goto = Some(root_id.to_string());
                 }
             });
@@ -443,7 +437,7 @@ fn subchat_strip(
                 ui.spacing_mut().item_spacing = Vec2::new(5.0, 4.0);
                 let is_root = current_id == root_id;
                 let root_btn = egui::Button::new(
-                    egui::RichText::new("★ Principal")
+                    egui::RichText::new("★ Main")
                         .font(if is_root { medium(11.5) } else { body(11.5) })
                         .color(if is_root {
                             Color32::from_rgb(0x1C, 0x16, 0x0A)
@@ -456,7 +450,7 @@ fn subchat_strip(
                 .corner_radius(CornerRadius::same(10));
                 if ui
                     .add(root_btn)
-                    .on_hover_text("Ir al chat principal de la orquestación")
+                    .on_hover_text("Go to the main orchestration thread")
                     .clicked()
                     && !is_root
                 {
@@ -471,9 +465,9 @@ fn subchat_strip(
                     let accent = brain_color_for(snap, &b.s("brain"));
                     let wave = b.get("wave").and_then(|v| v.as_u64()).unwrap_or(0) + 1;
                     let bname = b.s("brain_name");
-                    let short_brain = bname.split_whitespace().next().unwrap_or("cola");
+                    let short_brain = bname.split_whitespace().next().unwrap_or("queued");
                     let short_title: String = b.s("title").chars().take(18).collect();
-                    let pill_txt = format!("O{wave} · {short_title}");
+                    let pill_txt = format!("W{wave} · {short_title}");
                     let fill = if is_sel {
                         accent.gamma_multiply(0.24)
                     } else {
@@ -505,7 +499,7 @@ fn subchat_strip(
                             .corner_radius(CornerRadius::same(10)),
                         )
                         .on_hover_text(format!(
-                            "Subchat {} · Ola {wave} · {}\nEstado: {}",
+                            "Subchat {} · Wave {wave} · {}\nStatus: {}",
                             b.s("title"),
                             short_brain,
                             status_name(&st)
@@ -559,10 +553,10 @@ fn parallel_panel(
             .then_with(|| a.s("id").cmp(&b.s("id")))
     });
     let strategy = match run.s("strategy").as_str() {
-        "dag" => "DAG paralelo",
-        "fanout" => "Mesa paralela",
-        "direct" => "Directo",
-        _ => "Planificando",
+        "dag" => "Parallel DAG",
+        "fanout" => "Parallel Fan-out",
+        "direct" => "Direct",
+        _ => "Planning",
     };
     let director = run.s("director_name");
     let run_status = run.s("status");
@@ -624,17 +618,17 @@ fn parallel_panel(
                     ui.painter().circle_filled(rr.center(), 3.2, RUN);
                 }
                 ui.label(
-                    egui::RichText::new("Orquestación multi-agente")
+                    egui::RichText::new("Multi-Agent Orchestration")
                         .font(cond(15.0))
                         .color(INK),
                 );
                 chip(ui, strategy, INFO);
                 if !director.is_empty() {
-                    chip(ui, &format!("Dirige: {director}"), MASTER);
+                    chip(ui, &format!("Lead: {director}"), MASTER);
                 }
                 if total_n > 0 {
                     let live_txt = if active_n > 0 {
-                        format!("{done_n}/{total_n} listas · {active_n} activas")
+                        format!("{done_n}/{total_n} done · {active_n} active")
                     } else {
                         format!("{done_n}/{total_n} subchats")
                     };
@@ -685,13 +679,13 @@ fn parallel_panel(
                 ui.horizontal(|ui| {
                     ui.spinner();
                     ui.label(faint(
-                        "Construyendo grafo de subtareas y asignando cerebros según cuota…",
+                        "Building subtask dependency graph and assigning brains by quota…",
                     ));
                 });
                 return;
             }
 
-            // Animated Wave flow pipeline (Ola 1 ──▸ Ola 2 ──▸ Síntesis).
+            // Animated Wave flow pipeline (Wave 1 ──▸ Wave 2 ──▸ Synthesis).
             let max_wave = branches
                 .iter()
                 .filter_map(|b| b.get("wave").and_then(|v| v.as_u64()))
@@ -717,7 +711,7 @@ fn parallel_panel(
                     } else {
                         INK3
                     };
-                    let lbl = format!("Ola {} ({})", w + 1, wave_branches.len());
+                    let lbl = format!("Wave {} ({})", w + 1, wave_branches.len());
                     chip(ui, &lbl, w_col);
                     // Animated flow connector to next stage.
                     let (cr, _) = ui.allocate_exact_size(Vec2::new(26.0, 18.0), Sense::hover());
@@ -744,7 +738,7 @@ fn parallel_panel(
                 } else {
                     INK3
                 };
-                chip(ui, "Síntesis", synth_col);
+                chip(ui, "Synthesis", synth_col);
             });
 
             ui.add_space(8.0);
@@ -752,21 +746,14 @@ fn parallel_panel(
                 let st = b.s("status");
                 let is_running = st == "running";
                 let (st_label, st_col) = match st.as_str() {
-                    "running" => ("trabajando", RUN),
-                    "done" => ("lista", MASTER),
-                    "failed" => ("falló", ALARM),
-                    "stopped" => ("detenida", ATTN),
-                    _ => ("esperando", INK3),
+                    "running" => ("running", RUN),
+                    "done" => ("done", MASTER),
+                    "failed" => ("failed", ALARM),
+                    "stopped" => ("stopped", ATTN),
+                    _ => ("waiting", INK3),
                 };
                 let role_raw = b.s("role");
-                let role_lbl = match role_raw.as_str() {
-                    "explore" => "explora",
-                    "analyze" => "analiza",
-                    "review" => "revisa",
-                    "implement" => "implementa",
-                    "synthesize" => "síntesis",
-                    other => other,
-                };
+                let role_lbl = role_raw.as_str();
                 let tier = b.get("tier").and_then(|v| v.as_u64()).unwrap_or(2);
                 let wave = b.get("wave").and_then(|v| v.as_u64()).unwrap_or(0) + 1;
                 let tid = b.s("task_id");
@@ -823,11 +810,11 @@ fn parallel_panel(
                                     .font(medium(13.0))
                                     .color(INK),
                             );
-                            ui.label(faint(format!("Ola {wave} · T{tier} · {role_lbl}")));
+                            ui.label(faint(format!("Wave {wave} · T{tier} · {role_lbl}")));
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    if !tid.is_empty() && quiet(ui, "Ver subchat").clicked() {
+                                    if !tid.is_empty() && quiet(ui, "Open subchat").clicked() {
                                         *goto = Some(tid.clone());
                                     }
                                     ui.label(
@@ -857,9 +844,9 @@ fn parallel_panel(
                                     .filter_map(|d| d.as_str().map(String::from))
                                     .collect();
                                 if !deps.is_empty() {
-                                    ui.label(faint(format!("Espera a: {}", deps.join(", "))));
+                                    ui.label(faint(format!("Waiting on: {}", deps.join(", "))));
                                 } else {
-                                    ui.label(faint("Asignando cerebro disponible…"));
+                                    ui.label(faint("Assigning available brain…"));
                                 }
                             }
                             let bt = b.f("tokens").unwrap_or(0.0);
@@ -867,14 +854,14 @@ fn parallel_panel(
                                 ui.label(faint(format!("· {} tok", num(bt))));
                             }
                             if b.b("worktree", false) {
-                                ui.label(faint("· copia aislada"));
+                                ui.label(faint("· isolated worktree"));
                             }
                         });
                         if !err.is_empty() {
                             ui.label(egui::RichText::new(err).font(body(11.5)).color(ALARM));
                         } else if !summary.is_empty() {
                             egui::CollapsingHeader::new(
-                                egui::RichText::new("Ver aporte de este subchat")
+                                egui::RichText::new("View subchat contribution")
                                     .font(body(11.5))
                                     .color(INK3),
                             )
@@ -996,11 +983,7 @@ fn files_in(evs: &[Value], base: &str, since: f64, attachments: &HashSet<PathBuf
 
 fn files_gallery(ui: &mut egui::Ui, files: &[std::path::PathBuf]) {
     ui.add_space(4.0);
-    ui.label(
-        egui::RichText::new("Archivos")
-            .font(medium(12.0))
-            .color(INK3),
-    );
+    ui.label(egui::RichText::new("Files").font(medium(12.0)).color(INK3));
     ui.add_space(4.0);
     for f in files {
         let ext = f
@@ -1032,8 +1015,8 @@ fn files_gallery(ui: &mut egui::Ui, files: &[std::path::PathBuf]) {
                     let kind = match ext.as_str() {
                         "mp4" | "mov" | "webm" | "mkv" | "avi" => "video",
                         "mp3" | "wav" => "audio",
-                        e if IMG_EXT.contains(&e) || e == "svg" => "imagen",
-                        _ => "archivo",
+                        e if IMG_EXT.contains(&e) || e == "svg" => "image",
+                        _ => "file",
                     };
                     ui.add(
                         egui::Label::new(egui::RichText::new(&name).font(medium(13.0)).color(INK))
@@ -1043,16 +1026,16 @@ fn files_gallery(ui: &mut egui::Ui, files: &[std::path::PathBuf]) {
                     if quiet(
                         ui,
                         if kind == "video" || kind == "audio" {
-                            "Reproducir"
+                            "Play"
                         } else {
-                            "Abrir"
+                            "Open"
                         },
                     )
                     .clicked()
                     {
                         crate::app::open_browser(&f.display().to_string());
                     }
-                    if quiet(ui, "Carpeta").clicked() {
+                    if quiet(ui, "Folder").clicked() {
                         if let Some(d) = f.parent() {
                             crate::app::open_browser(&d.display().to_string());
                         }
@@ -1450,16 +1433,16 @@ fn clip_one_line(s: &str, max_chars: usize) -> String {
 
 fn tool_action_kind(name: &str, has_command: bool) -> &'static str {
     match name {
-        "Read" | "read_file" | "view_file" | "list_directory" => "Leer",
-        "Edit" | "MultiEdit" | "edit_file" | "file_change" => "Editar",
-        "Write" | "write_file" | "create_file" => "Escribir",
-        "Bash" | "run_command" | "shell" | "command_execution" => "Ejecutar",
-        "Grep" | "Glob" | "search" | "search_directory" | "find_file" => "Buscar",
-        "WebFetch" | "WebSearch" | "web_search" | "search_web" | "read_url_content" => "Consultar",
-        "Task" | "Agent" | "invoke_subagent" | "collab_agent_tool_call" => "Subagente",
-        "todo_list" => "Actualizar plan",
-        _ if has_command => "Ejecutar",
-        _ => "Usar",
+        "Read" | "read_file" | "view_file" | "list_directory" => "Read",
+        "Edit" | "MultiEdit" | "edit_file" | "file_change" => "Edit",
+        "Write" | "write_file" | "create_file" => "Write",
+        "Bash" | "run_command" | "shell" | "command_execution" => "Run",
+        "Grep" | "Glob" | "search" | "search_directory" | "find_file" => "Search",
+        "WebFetch" | "WebSearch" | "web_search" | "search_web" | "read_url_content" => "Fetch",
+        "Task" | "Agent" | "invoke_subagent" | "collab_agent_tool_call" => "Subagent",
+        "todo_list" => "Update plan",
+        _ if has_command => "Run",
+        _ => "Use",
     }
 }
 
@@ -1505,7 +1488,7 @@ fn tool_summary(ev: &Value, codex: bool) -> (String, Option<String>) {
     let summary = if let Some(cmd) = &command {
         let preview = clip_one_line(cmd, 62);
         if preview.is_empty() {
-            format!("{action} un comando")
+            format!("{action} a command")
         } else {
             format!("{action}: {preview}")
         }
@@ -1517,13 +1500,13 @@ fn tool_summary(ev: &Value, codex: bool) -> (String, Option<String>) {
         };
         format!("{action} {shown}")
     } else if name.is_empty() {
-        "Resultado de herramienta".into()
+        "Tool result".into()
     } else if name == "todo_list" {
         action.into()
     } else {
         let label = input.os("tool").unwrap_or_else(|| name.clone());
         match action {
-            "Leer" | "Editar" | "Escribir" | "Ejecutar" | "Buscar" | "Consultar" | "Subagente" => {
+            "Read" | "Edit" | "Write" | "Run" | "Search" | "Fetch" | "Subagent" => {
                 format!("{action} ({label})")
             }
             _ => format!("{action} {label}"),
@@ -1546,7 +1529,7 @@ fn activity_header_text(block: &ActivityBlock<'_>, live_open: bool) -> (String, 
             FlowStep::Thinking { active, .. } => {
                 thinks += 1;
                 if *active {
-                    active_label = Some("Razonando…".into());
+                    active_label = Some("Thinking…".into());
                 }
             }
             FlowStep::Tool {
@@ -1561,10 +1544,10 @@ fn activity_header_text(block: &ActivityBlock<'_>, live_open: bool) -> (String, 
                 }
                 let (sum, cmd) = tool_summary(ev, *codex);
                 match tool_action_kind(&ev.s("name"), cmd.is_some()) {
-                    "Leer" => reads += 1,
-                    "Editar" | "Escribir" => edits += 1,
-                    "Ejecutar" => cmds += 1,
-                    "Buscar" | "Consultar" => searches += 1,
+                    "Read" => reads += 1,
+                    "Edit" | "Write" => edits += 1,
+                    "Run" => cmds += 1,
+                    "Search" | "Fetch" => searches += 1,
                     _ => {}
                 }
                 if *running {
@@ -1576,54 +1559,54 @@ fn activity_header_text(block: &ActivityBlock<'_>, live_open: bool) -> (String, 
     }
     let total = block.steps.len();
     let count = if total == 1 {
-        "1 paso".to_string()
+        "1 step".to_string()
     } else {
-        format!("{total} pasos")
+        format!("{total} steps")
     };
     if live_open {
         if let Some(active) = active_label {
-            return (format!("En curso ({count}) · {active}"), errors);
+            return (format!("In progress ({count}) · {active}"), errors);
         }
-        return (format!("Flujo en curso ({count})"), errors);
+        return (format!("Working ({count})"), errors);
     }
     let mut parts: Vec<String> = Vec::new();
     if reads > 0 {
         parts.push(if reads == 1 {
-            "1 lectura".into()
+            "1 read".into()
         } else {
-            format!("{reads} lecturas")
+            format!("{reads} reads")
         });
     }
     if searches > 0 {
         parts.push(if searches == 1 {
-            "1 búsqueda".into()
+            "1 search".into()
         } else {
-            format!("{searches} búsquedas")
+            format!("{searches} searches")
         });
     }
     if cmds > 0 {
         parts.push(if cmds == 1 {
-            "1 comando".into()
+            "1 command".into()
         } else {
-            format!("{cmds} comandos")
+            format!("{cmds} commands")
         });
     }
     if edits > 0 {
         parts.push(if edits == 1 {
-            "1 edición".into()
+            "1 edit".into()
         } else {
-            format!("{edits} ediciones")
+            format!("{edits} edits")
         });
     }
     if thinks > 0 && parts.is_empty() {
-        parts.push("razonamiento".into());
+        parts.push("reasoning".into());
     }
     let detail = if parts.is_empty() {
         String::new()
     } else {
         format!(" · {}", parts.join(", "))
     };
-    (format!("Actividad ({count}){detail}"), errors)
+    (format!("Activity ({count}){detail}"), errors)
 }
 
 fn render_activity_block(
@@ -1692,7 +1675,7 @@ fn render_activity_block(
                         egui::RichText::new(if errors == 1 {
                             "1 error".into()
                         } else {
-                            format!("{errors} errores")
+                            format!("{errors} errors")
                         })
                         .font(medium(11.0))
                         .color(ALARM),
@@ -1736,7 +1719,7 @@ fn render_activity_block(
                                             );
                                             ui.painter().circle_filled(r.center(), 3.2, INFO);
                                             ui.label(
-                                                egui::RichText::new("Subchat · Subagente")
+                                                egui::RichText::new("Subchat · Subagent")
                                                     .font(medium(11.5))
                                                     .color(INFO),
                                             );
@@ -1771,12 +1754,12 @@ fn thinking_row(ui: &mut egui::Ui, task_id: &str, idx: usize, text: &str, active
     let preview = clip_one_line(text, 72);
     let label = if preview.is_empty() {
         if active {
-            "Razonando…".into()
+            "Thinking…".into()
         } else {
-            "Razonamiento".into()
+            "Reasoning".into()
         }
     } else {
-        format!("Pensamiento: {preview}")
+        format!("Thought: {preview}")
     };
     let id = ui.make_persistent_id(("step_think", task_id, idx));
     let mut clicked = false;
@@ -1824,26 +1807,26 @@ fn thinking_row(ui: &mut egui::Ui, task_id: &str, idx: usize, text: &str, active
 
 fn live_status_label(st: &str, flow: &[FlowItem<'_>]) -> String {
     match st {
-        "queued" => return "Esperando turno…".into(),
-        "planning" => return "Descomponiendo plan paralelo…".into(),
-        "synthesizing" => return "El Director está sintetizando las ramas…".into(),
-        "verifying" => return "Comprobando el resultado…".into(),
-        "stopping" => return "Interrumpiendo…".into(),
+        "queued" => return "Waiting in queue…".into(),
+        "planning" => return "Planning parallel graph…".into(),
+        "synthesizing" => return "Director is synthesizing branches…".into(),
+        "verifying" => return "Verifying result…".into(),
+        "stopping" => return "Stopping…".into(),
         _ => {}
     }
     if let Some(last) = flow.last() {
         match last {
-            FlowItem::Prose(_) => return "Escribiendo respuesta…".into(),
+            FlowItem::Prose(_) => return "Writing response…".into(),
             FlowItem::Activity(block) => {
                 if let Some(step) = block.steps.last() {
                     return match step {
-                        FlowStep::Thinking { .. } => "Razonando…".into(),
+                        FlowStep::Thinking { .. } => "Thinking…".into(),
                         FlowStep::Tool { ev, codex, .. } => {
                             let (sum, _) = tool_summary(ev, *codex);
                             format!("{sum}…")
                         }
                         FlowStep::Subagent { text, .. } => {
-                            format!("Subagente: {}…", clip_one_line(text, 48))
+                            format!("Subagent: {}…", clip_one_line(text, 48))
                         }
                     };
                 }
@@ -1851,7 +1834,7 @@ fn live_status_label(st: &str, flow: &[FlowItem<'_>]) -> String {
             _ => {}
         }
     }
-    "Trabajando…".into()
+    "Working…".into()
 }
 
 fn format_elapsed(secs: f64) -> String {
@@ -1878,14 +1861,14 @@ fn tool_row(
     let input = ev.get("input").unwrap_or(&Value::Null);
     let codex_command = codex && input.as_object().is_some_and(|o| o.is_empty());
     let (summary, command) = tool_summary(ev, codex);
-    let is_subagent = tool_action_kind(&name, command.is_some()) == "Subagente";
+    let is_subagent = tool_action_kind(&name, command.is_some()) == "Subagent";
 
     let id = ui.make_persistent_id(("step_tool", task_id, idx));
     if is_subagent {
         let role = ["Role", "role", "subagent_type", "TypeName", "description"]
             .iter()
             .find_map(|k| input.os(k))
-            .unwrap_or_else(|| "Subagente".into());
+            .unwrap_or_else(|| "Subagent".into());
         let prompt = ["Prompt", "prompt", "task", "description"]
             .iter()
             .find_map(|k| input.os(k))
@@ -1954,11 +1937,11 @@ fn tool_row(
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked();
                     let st_txt = if has_err {
-                        "falló"
+                        "failed"
                     } else if running {
-                        "trabajando…"
+                        "working…"
                     } else {
-                        "listo"
+                        "done"
                     };
                     ui.label(egui::RichText::new(st_txt).font(body(11.0)).color(accent));
                 });
@@ -1967,7 +1950,7 @@ fn tool_row(
                 }
                 header.body(|ui| {
                     if !prompt.is_empty() {
-                        ui.label(faint("Encargo"));
+                        ui.label(faint("Prompt"));
                         ui.add(
                             egui::Label::new(
                                 egui::RichText::new(clip_one_line(&prompt, 240))
@@ -1984,7 +1967,7 @@ fn tool_row(
                     } else if running {
                         ui.horizontal(|ui| {
                             ui.spinner();
-                            ui.label(faint("Esperando respuesta del subagente…"));
+                            ui.label(faint("Waiting for subagent response…"));
                         });
                     }
                 });
@@ -2014,7 +1997,7 @@ fn tool_row(
                 if let Some(result) = result {
                     let error = result.b("error", false);
                     ui.label(
-                        egui::RichText::new(if error { "Falló" } else { "✓" })
+                        egui::RichText::new(if error { "Failed" } else { "✓" })
                             .font(medium(11.5))
                             .color(if error { ALARM } else { RUN }),
                     );
@@ -2048,12 +2031,12 @@ fn tool_row(
             .as_deref()
             .filter(|_| codex_command || input.as_object().is_some_and(|o| o.len() <= 1))
         {
-            crate::gui::response::code_block(ui, "Comando", command);
+            crate::gui::response::code_block(ui, "Command", command);
         } else if !input.is_null() && input.as_object().is_none_or(|o| !o.is_empty()) {
             let pretty = serde_json::to_string_pretty(input).unwrap_or_default();
             crate::gui::response::code_block(
                 ui,
-                if name.is_empty() { "Entrada" } else { &name },
+                if name.is_empty() { "Input" } else { &name },
                 &pretty,
             );
         }
@@ -2061,7 +2044,7 @@ fn tool_row(
             .and_then(|result| result.os("text"))
             .filter(|text| !text.is_empty())
         {
-            crate::gui::response::code_block(ui, "Resultado", &text);
+            crate::gui::response::code_block(ui, "Output", &text);
         }
     });
 }
@@ -2101,8 +2084,8 @@ fn divider(ui: &mut egui::Ui, text: &str) {
 fn verify_card(ui: &mut egui::Ui, ev: &Value) {
     let cmd = ev.s("cmd");
     match ev.s("phase").as_str() {
-        "start" => divider(ui, &format!("Comprobando con {cmd}")),
-        "skipped" => divider(ui, "No se pudo ejecutar la prueba; queda para revisar"),
+        "start" => divider(ui, &format!("Verifying with {cmd}")),
+        "skipped" => divider(ui, "Could not run verification; ready for review"),
         _ => {
             let ok = ev.b("ok", false);
             card(ui, Some(if ok { RUN } else { ALARM }), |ui| {
@@ -2110,11 +2093,11 @@ fn verify_card(ui: &mut egui::Ui, ev: &Value) {
                 ui.label(
                     egui::RichText::new(if ok {
                         format!(
-                            "La prueba pasó ({cmd}, {:.0} s)",
+                            "Verification passed ({cmd}, {:.0} s)",
                             ev.f("secs").unwrap_or(0.0)
                         )
                     } else {
-                        format!("La prueba falló ({cmd})")
+                        format!("Verification failed ({cmd})")
                     })
                     .font(medium(13.0))
                     .color(if ok { RUN } else { ALARM }),
@@ -2222,9 +2205,9 @@ fn error_card(
         let when = text
             .split("resets")
             .nth(1)
-            .map(|s| format!(" Vuelve {}", s.trim().trim_end_matches('.')))
+            .map(|s| format!(" Resets {}", s.trim().trim_end_matches('.')))
             .unwrap_or_default();
-        format!("{} llegó a su límite de uso.{when}", t.s("brain_name"))
+        format!("{} reached its usage limit.{when}", t.s("brain_name"))
     } else {
         text.to_string()
     };
@@ -2239,12 +2222,12 @@ fn error_card(
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
                 if can_retry {
-                    if primary(ui, "Reintentar turno").clicked() {
+                    if primary(ui, "Retry turn").clicked() {
                         action = Some(ErrorAction::Retry(String::new()));
                     }
                     let alternatives = snap.arr("brains");
                     let available = snap.arr("chain");
-                    ui.menu_button("Elegir otro cerebro", |ui| {
+                    ui.menu_button("Choose another brain", |ui| {
                         let mut found = false;
                         for brain in &alternatives {
                             let id = brain.s("id");
@@ -2265,16 +2248,16 @@ fn error_card(
                             }
                         }
                         if !found {
-                            ui.label("No hay otro cerebro disponible para este turno.");
+                            ui.label("No other brain available for this turn.");
                         }
                     });
                 }
                 match kind {
                     ErrorKind::Auth => {
                         let btn = if can_retry {
-                            quiet(ui, "Abrir Cerebros")
+                            quiet(ui, "Open Brains")
                         } else {
-                            primary(ui, "Abrir Cerebros")
+                            primary(ui, "Open Brains")
                         };
                         if btn.clicked() {
                             action = Some(ErrorAction::OpenBrains);
@@ -2282,9 +2265,9 @@ fn error_card(
                     }
                     ErrorKind::Quota => {
                         let btn = if can_retry {
-                            quiet(ui, "Ver uso y saldo")
+                            quiet(ui, "View usage & balance")
                         } else {
-                            primary(ui, "Ver uso y saldo")
+                            primary(ui, "View usage & balance")
                         };
                         if btn.clicked() {
                             action = Some(ErrorAction::OpenUsage);
@@ -2292,9 +2275,9 @@ fn error_card(
                     }
                     ErrorKind::ContextFull => {
                         let btn = if can_retry {
-                            quiet(ui, "Nueva conversación")
+                            quiet(ui, "New conversation")
                         } else {
-                            primary(ui, "Nueva conversación")
+                            primary(ui, "New conversation")
                         };
                         if btn.clicked() {
                             action = Some(ErrorAction::NewChat);
@@ -2340,9 +2323,7 @@ pub(super) fn diff_window(app: &mut App, ctx: &egui::Context) {
     if let Some(DiffView::Loading { task_id, rx }) = app.ui.diff.as_ref() {
         let done = match rx.try_recv() {
             Ok(text) => Some(text),
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                Some("No se pudieron obtener los cambios.".into())
-            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Some("Could not load diff.".into()),
             Err(std::sync::mpsc::TryRecvError::Empty) => None,
         };
         if let Some(text) = done {
@@ -2367,9 +2348,9 @@ pub(super) fn diff_window(app: &mut App, ctx: &egui::Context) {
     let title = match view {
         DiffView::Loading { task_id, .. } | DiffView::Ready { task_id, .. } => {
             if task_id.is_empty() {
-                "Cambios de la tarea".to_string()
+                "Task diff".to_string()
             } else {
-                format!("Cambios de la tarea ({task_id})")
+                format!("Task diff ({task_id})")
             }
         }
     };
@@ -2382,16 +2363,16 @@ pub(super) fn diff_window(app: &mut App, ctx: &egui::Context) {
                 ui.add_space(16.0);
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label(dim("Calculando cambios en Git…"));
+                    ui.label(dim("Computing Git diff…"));
                 });
                 ctx.request_repaint_after(std::time::Duration::from_millis(80));
             }
             DiffView::Ready { text, stats, .. } => {
                 ui.horizontal(|ui| {
                     let f_lbl = if stats.files == 1 {
-                        "1 archivo".to_string()
+                        "1 file".to_string()
                     } else {
-                        format!("{} archivos", stats.files)
+                        format!("{} files", stats.files)
                     };
                     ui.label(egui::RichText::new(f_lbl).font(medium(12.5)).color(INK2));
                     ui.label(
@@ -2406,7 +2387,7 @@ pub(super) fn diff_window(app: &mut App, ctx: &egui::Context) {
                     );
                     if stats.total_lines > 4000 {
                         ui.label(faint(format!(
-                            "(mostrando 4000 de {} líneas)",
+                            "(showing 4000 of {} lines)",
                             stats.total_lines
                         )));
                     }
@@ -2416,7 +2397,7 @@ pub(super) fn diff_window(app: &mut App, ctx: &egui::Context) {
                             .add_enabled(
                                 can_copy,
                                 egui::Button::new(
-                                    egui::RichText::new("Copiar diff")
+                                    egui::RichText::new("Copy diff")
                                         .font(medium(12.0))
                                         .color(if can_copy { INK2 } else { INK3 }),
                                 )
@@ -2434,7 +2415,7 @@ pub(super) fn diff_window(app: &mut App, ctx: &egui::Context) {
                 ui.separator();
                 egui::ScrollArea::both().show(ui, |ui| {
                     if text.trim().is_empty() {
-                        ui.label(dim("Sin cambios."));
+                        ui.label(dim("No changes."));
                     }
                     for line in text.lines().take(4000) {
                         let c = if line.starts_with('+') && !line.starts_with("+++") {
@@ -2455,7 +2436,7 @@ pub(super) fn diff_window(app: &mut App, ctx: &egui::Context) {
             }
         });
     if copied {
-        app.say("Diff copiado", RUN);
+        app.say("Diff copied", RUN);
     }
     if !open {
         app.ui.diff = None;
@@ -2579,7 +2560,7 @@ mod tests {
                     matches!(&b.steps[0], FlowStep::Thinking { text, .. } if text == "Revisando el código")
                 );
                 assert!(
-                    matches!(&b.steps[1], FlowStep::Tool { ev, result: Some(_), running: false, .. } if tool_summary(ev, false).0 == "Ejecutar: cargo test --release")
+                    matches!(&b.steps[1], FlowStep::Tool { ev, result: Some(_), running: false, .. } if tool_summary(ev, false).0 == "Run: cargo test --release")
                 );
             }
             _ => panic!("expected first item to be Activity"),
@@ -2589,11 +2570,11 @@ mod tests {
             FlowItem::Activity(b) => {
                 assert_eq!(b.steps.len(), 1);
                 assert!(
-                    matches!(&b.steps[0], FlowStep::Tool { ev, result: None, running: true, .. } if tool_summary(ev, false).0 == "Leer …/src/main.rs")
+                    matches!(&b.steps[0], FlowStep::Tool { ev, result: None, running: true, .. } if tool_summary(ev, false).0 == "Read …/src/main.rs")
                 );
             }
             _ => panic!("expected third item to be Activity"),
         }
-        assert_eq!(live_status_label("running", &flow), "Leer …/src/main.rs…");
+        assert_eq!(live_status_label("running", &flow), "Read …/src/main.rs…");
     }
 }

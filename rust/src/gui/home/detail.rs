@@ -37,12 +37,12 @@ pub(super) fn core_detail(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap) {
     ui.add_space(10.0);
     panel(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Resumen").font(cond(18.0)).color(INK));
+            ui.label(egui::RichText::new("Overview").font(cond(18.0)).color(INK));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let (t, col) = match snap.overall.as_str() {
-                    "ALARM" => ("Con alarmas", ALARM),
-                    "WARNING" => ("Atención", ATTN),
-                    _ => ("Todo en orden", RUN),
+                    "ALARM" => ("Alarms active", ALARM),
+                    "WARNING" => ("Attention", ATTN),
+                    _ => ("All clear", RUN),
                 };
                 chip(ui, t, col);
             });
@@ -55,11 +55,11 @@ pub(super) fn core_detail(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap) {
             .sum();
         let today: f64 = bs.iter().map(|b| b.usage.today).sum();
         ui.horizontal_wrapped(|ui| {
-            stat(ui, &format!("{active}/{}", bs.len()), "trabajando");
+            stat(ui, &format!("{active}/{}", bs.len()), "active");
             ui.add_space(18.0);
-            stat(ui, &subs.to_string(), "subagentes");
+            stat(ui, &subs.to_string(), "subagents");
             ui.add_space(18.0);
-            stat(ui, &num(today), "tokens hoy");
+            stat(ui, &num(today), "tokens today");
         });
         ui.add_space(8.0);
         for b in bs {
@@ -94,12 +94,12 @@ pub(super) fn core_detail(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap) {
     let alarms = &snap.alarms;
     panel(ui, |ui| {
         ui.label(
-            egui::RichText::new(format!("Alarmas ({})", alarms.len()))
+            egui::RichText::new(format!("Alarms ({})", alarms.len()))
                 .font(cond(15.0))
                 .color(INK),
         );
         if alarms.is_empty() {
-            ui.label(dim("Nada que atender."));
+            ui.label(dim("Nothing needs attention."));
         }
         for a in alarms.iter().take(5) {
             ui.horizontal_top(|ui| {
@@ -110,22 +110,22 @@ pub(super) fn core_detail(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap) {
                     level_color(&a.level),
                 );
                 ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(crate::l10n::es(&a.text))
-                            .font(body(12.5))
-                            .color(INK2),
-                    )
-                    .wrap(),
+                    egui::Label::new(egui::RichText::new(&a.text).font(body(12.5)).color(INK2))
+                        .wrap(),
                 );
             });
         }
-        if alarms.len() > 5 && quiet(ui, "Ver todas").clicked() {
+        if alarms.len() > 5 && quiet(ui, "View all").clicked() {
             app.page = crate::gui::Page::Alarms;
         }
     });
     ui.add_space(10.0);
     panel(ui, |ui| {
-        ui.label(egui::RichText::new("Diario").font(cond(15.0)).color(INK));
+        ui.label(
+            egui::RichText::new("Activity Log")
+                .font(cond(15.0))
+                .color(INK),
+        );
         for d in snap.diary.iter().rev().take(12) {
             ui.horizontal_top(|ui| {
                 ui.label(egui::RichText::new(hhmm(d.ts)).font(mono(11.0)).color(INK3));
@@ -153,7 +153,7 @@ pub(super) fn brain_detail(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap, id
 
     panel(ui, |ui| {
         ui.horizontal(|ui| {
-            if icon_button(ui, Icon::Close, "Volver al resumen", false, true).clicked() {
+            if icon_button(ui, Icon::Close, "Back to overview", false, true).clicked() {
                 app.ui.sel = "core".into();
             }
             ui.label(egui::RichText::new(&b.name).font(cond(19.0)).color(INK));
@@ -161,19 +161,11 @@ pub(super) fn brain_detail(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap, id
                 chip(ui, sw, sc);
             });
         });
-        if !ch.reason.is_empty() && ch.reason != "disponible" {
-            ui.label(
-                egui::RichText::new(crate::l10n::es(&ch.reason))
-                    .font(body(12.5))
-                    .color(ATTN),
-            );
+        if !ch.reason.is_empty() && ch.reason != "disponible" && ch.reason != "available" {
+            ui.label(egui::RichText::new(&ch.reason).font(body(12.5)).color(ATTN));
         }
         if !b.warning.is_empty() {
-            ui.label(
-                egui::RichText::new(crate::l10n::es(&b.warning))
-                    .font(body(12.5))
-                    .color(ATTN),
-            );
+            ui.label(egui::RichText::new(&b.warning).font(body(12.5)).color(ATTN));
         }
         ui.add_space(6.0);
         // Quotas.
@@ -182,16 +174,16 @@ pub(super) fn brain_detail(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap, id
             let rem = (100.0 - v).clamp(0.0, 100.0);
             ui.horizontal(|ui| {
                 ui.label(faint(match q.group.as_str() {
-                    "session" => "Sesión 5 h",
-                    "weekly" => "Semana",
-                    _ => "Cuota",
+                    "session" => "5h session",
+                    "weekly" => "Weekly",
+                    _ => "Quota",
                 }));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if let Some(r) = q.reset {
-                        ui.label(faint(format!("vuelve {}", hhmm(r))));
+                        ui.label(faint(format!("resets {}", hhmm(r))));
                     }
                     ui.label(
-                        egui::RichText::new(format!("{v:.0} % (queda {rem:.0} %)"))
+                        egui::RichText::new(format!("{v:.0}% ({rem:.0}% left)"))
                             .font(mono(11.5))
                             .color(pct_color(Some(v))),
                     );
@@ -202,10 +194,10 @@ pub(super) fn brain_detail(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap, id
         }
         if let Some(r) = b.effective.ratio {
             ui.horizontal(|ui| {
-                ui.label(faint("Presupuesto del día"));
+                ui.label(faint("Daily budget"));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
-                        egui::RichText::new(format!("{:.0} %", (r * 100.0).min(100.0)))
+                        egui::RichText::new(format!("{:.0}%", (r * 100.0).min(100.0)))
                             .font(mono(12.0))
                             .color(pct_color(Some(r * 100.0))),
                     );
@@ -215,7 +207,7 @@ pub(super) fn brain_detail(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap, id
         }
         if let Some(bal) = &b.balance {
             ui.horizontal(|ui| {
-                ui.label(faint("Saldo"));
+                ui.label(faint("Balance"));
                 ui.label(
                     egui::RichText::new(format!(
                         "{:.2} {}",
@@ -229,11 +221,11 @@ pub(super) fn brain_detail(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap, id
         }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            stat(ui, &num(b.usage.today), "hoy");
+            stat(ui, &num(b.usage.today), "today");
             ui.add_space(14.0);
-            stat(ui, &num(b.usage.h5), "5 h");
+            stat(ui, &num(b.usage.h5), "5h");
             ui.add_space(14.0);
-            stat(ui, &num(b.usage.d7), "7 días");
+            stat(ui, &num(b.usage.d7), "7 days");
         });
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
@@ -242,14 +234,14 @@ pub(super) fn brain_detail(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap, id
                 .model
                 .as_deref()
                 .filter(|s| !s.is_empty())
-                .unwrap_or("automático");
+                .unwrap_or("auto");
             let combo_w = (ui.available_width() - 90.0).clamp(110.0, 180.0);
             if !b.models.is_empty() {
                 egui::ComboBox::from_id_salt(("dmodel", id))
                     .selected_text(egui::RichText::new(cur).font(mono(12.0)))
                     .width(combo_w)
                     .show_ui(ui, |ui| {
-                        if ui.selectable_label(false, "automático").clicked() {
+                        if ui.selectable_label(false, "auto").clicked() {
                             app.act(
                                 json!({"a": "set", "brain": id, "field": "model", "value": null}),
                             );
@@ -267,10 +259,10 @@ pub(super) fn brain_detail(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap, id
                     });
             }
             if paused {
-                if primary(ui, "Reanudar").clicked() {
+                if primary(ui, "Resume").clicked() {
                     app.act(json!({"a": "resume", "brain": id}));
                 }
-            } else if quiet(ui, "Pausar").clicked() {
+            } else if quiet(ui, "Pause").clicked() {
                 app.act(json!({"a": "pause", "brain": id}));
             }
         });
@@ -286,41 +278,41 @@ pub(super) fn brain_detail(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap, id
     let shared = lv.get(li).map(|l| l.len() > 1).unwrap_or(false);
     panel(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Jerarquía").font(cond(15.0)).color(INK));
+            ui.label(egui::RichText::new("Hierarchy").font(cond(15.0)).color(INK));
             ui.label(faint(format!(
-                "nivel {} de {}{}",
+                "tier {} of {}{}",
                 li + 1,
                 lv.len(),
-                if shared { " · comparte nivel" } else { "" }
+                if shared { " · shared tier" } else { "" }
             )));
         });
         ui.label(faint(if ch.master {
-            "Está al mando ahora."
+            "Currently in command."
         } else {
-            "Manda cuando los niveles de arriba no están disponibles."
+            "Takes command when higher tiers are unavailable."
         }));
         ui.add_space(6.0);
         let mut new: Option<Vec<Vec<ChainSnap>>> = None;
         let mut solo = false;
         ui.horizontal_wrapped(|ui| {
             if ui
-                .add_enabled(li > 0 || shared, egui::Button::new("Subir"))
-                .on_hover_text("Un nivel más arriba")
+                .add_enabled(li > 0 || shared, egui::Button::new("Move up"))
+                .on_hover_text("Move up one tier")
                 .clicked()
             {
                 new = Some(move_brain(&lv, id, -1));
             }
             if ui
-                .add_enabled(li + 1 < lv.len() || shared, egui::Button::new("Bajar"))
-                .on_hover_text("Un nivel más abajo")
+                .add_enabled(li + 1 < lv.len() || shared, egui::Button::new("Move down"))
+                .on_hover_text("Move down one tier")
                 .clicked()
             {
                 new = Some(move_brain(&lv, id, 1));
             }
             if li > 0
                 && ui
-                    .button("Mandar junto al de arriba")
-                    .on_hover_text("Comparten el mando y se reparten las tareas")
+                    .button("Share tier above")
+                    .on_hover_text("Share command and split tasks with the tier above")
                     .clicked()
             {
                 let mut v = lv.clone();
@@ -333,8 +325,8 @@ pub(super) fn brain_detail(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap, id
             }
             if shared
                 && ui
-                    .button("Nivel propio")
-                    .on_hover_text("Sale del nivel compartido")
+                    .button("Dedicated tier")
+                    .on_hover_text("Leave shared tier")
                     .clicked()
             {
                 let mut v = lv.clone();
@@ -345,17 +337,17 @@ pub(super) fn brain_detail(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap, id
                 v.retain(|l| !l.is_empty());
                 new = Some(v);
             }
-            if (li > 0 || shared) && primary(ui, "Mandar solo").clicked() {
+            if (li > 0 || shared) && primary(ui, "Solo command").clicked() {
                 solo = true;
             }
         });
         if let Some(v) = new {
             send(app, &v);
-            app.say("Jerarquía guardada", MASTER);
+            app.say("Hierarchy saved", MASTER);
         }
         if solo {
             app.act(json!({"a": "take_command", "brain": id}));
-            app.say(format!("{} manda solo", b.name), MASTER);
+            app.say(format!("{} took solo command", b.name), MASTER);
         }
     });
     ui.add_space(10.0);
@@ -372,12 +364,12 @@ pub(super) fn brain_detail(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap, id
         .collect();
     panel(ui, |ui| {
         ui.label(
-            egui::RichText::new("Subagentes y tareas")
+            egui::RichText::new("Subagents & Tasks")
                 .font(cond(15.0))
                 .color(INK),
         );
         if subs.is_empty() && jobs.is_empty() && tasks.is_empty() {
-            ui.label(dim("Sin trabajo en curso."));
+            ui.label(dim("No active work."));
         }
         for s in subs.iter().take(10) {
             ui.horizontal(|ui| {
@@ -400,7 +392,7 @@ pub(super) fn brain_detail(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap, id
         for j in &jobs {
             ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new(format!("delegó a {}", j.to))
+                    egui::RichText::new(format!("delegated to {}", j.to))
                         .font(medium(12.0))
                         .color(RUN),
                 );
@@ -451,20 +443,20 @@ fn architecture(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap) {
     panel(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(
-                egui::RichText::new("Arquitectura de trabajo")
+                egui::RichText::new("Work Architecture")
                     .font(cond(16.0))
                     .color(INK),
             );
             if a.by_model {
-                chip(ui, "por IA", INFO);
+                chip(ui, "AI-planned", INFO);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if a.auto {
-                    chip(ui, "automática", RUN);
+                    chip(ui, "auto", RUN);
                 }
             });
         });
-        ui.label(faint("Según los cerebros disponibles ahora"));
+        ui.label(faint("Based on currently available brains"));
         ui.add_space(6.0);
         // Role rows: dot in the brain's colour, name, role.
         for l in &a.levels {
@@ -472,11 +464,11 @@ fn architecture(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap) {
                 let role = a.roles.get(id).map(String::as_str).unwrap_or("");
                 let (name, i) = names.get(id.as_str()).copied().unwrap_or((id.as_str(), 0));
                 let (label, col) = match role {
-                    "director" => ("dirige", MASTER),
-                    "submanager" => ("subgerente", INFO),
-                    "producer" => ("produce", INK),
-                    "workhorse" => ("burro de carga", RUN),
-                    _ => ("reserva", INK3),
+                    "director" => ("director", MASTER),
+                    "submanager" => ("sub-lead", INFO),
+                    "producer" => ("producer", INK),
+                    "workhorse" => ("workhorse", RUN),
+                    _ => ("reserve", INK3),
                 };
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(Vec2::splat(10.0), Sense::hover());
@@ -502,21 +494,21 @@ fn architecture(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap) {
         }
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
-            if a.differs && !a.auto && primary(ui, "Aplicar").clicked() {
+            if a.differs && !a.auto && primary(ui, "Apply").clicked() {
                 apply = true;
             }
-            if quiet(ui, "Organizar con IA")
-                .on_hover_text("Gemini 4 Neon (o el mejor cerebro disponible) propone la jerarquía")
+            if quiet(ui, "Organize with AI")
+                .on_hover_text("Ask the strongest available brain to propose the optimal hierarchy")
                 .clicked()
             {
                 app.act(json!({"a": "organize"}));
-                app.say("Pidiendo a la IA que organice el trabajo…", INFO);
+                app.say("Asking AI to organize work hierarchy…", INFO);
             }
             let mut on = a.auto;
             if ui
                 .checkbox(
                     &mut on,
-                    egui::RichText::new("Reorganizar sola cuando cambie la disponibilidad")
+                    egui::RichText::new("Auto-reorganize when brain availability changes")
                         .font(body(12.0))
                         .color(INK2),
                 )
@@ -528,7 +520,7 @@ fn architecture(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap) {
     });
     if apply {
         app.act(crate::architect::apply_payload(&raw_a));
-        app.say(format!("Arquitectura aplicada: {}", a.summary), MASTER);
+        app.say(format!("Architecture applied: {}", a.summary), MASTER);
     }
     if let Some(on) = toggle {
         let mut c = app.sup.cfg.get();
@@ -540,9 +532,9 @@ fn architecture(app: &mut App, ui: &mut egui::Ui, snap: &HomeSnap) {
         app.say(
             if r == "ok" {
                 if on {
-                    "MetaBrain reorganizará el trabajo solo".to_string()
+                    "MetaBrain will auto-reorganize work".to_string()
                 } else {
-                    "Reorganización automática apagada".to_string()
+                    "Auto-reorganize disabled".to_string()
                 }
             } else {
                 r

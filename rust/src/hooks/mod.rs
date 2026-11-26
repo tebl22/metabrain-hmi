@@ -9,7 +9,7 @@ mod resolve;
 #[cfg(test)]
 mod tests;
 
-pub use install::install;
+pub use install::{install, uninstall};
 pub use resolve::resolve_brain;
 
 use crate::memory::Memory;

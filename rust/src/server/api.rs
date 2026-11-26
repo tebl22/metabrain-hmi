@@ -306,6 +306,11 @@ pub(super) fn dispatch(
         return;
     }
 
+    if path == "/api/hooks/uninstall" && method == "POST" {
+        handle_hooks_uninstall(sup, req, local);
+        return;
+    }
+
     send_json(req, 404, &json!({"error": "not found"}), &[]);
 }
 
@@ -907,6 +912,23 @@ fn handle_hooks_install(sup: &Arc<Supervisor>, mut req: Request, local: bool) {
         .unwrap_or_else(|| std::path::PathBuf::from(bin));
     let cfg = sup.cfg.get();
     let lines = crate::hooks::install(&cfg, exe.to_string_lossy().as_ref(), dry);
+    send_json(
+        req,
+        200,
+        &json!({"ok": true, "dry_run": dry, "result": lines}),
+        &[],
+    );
+}
+
+fn handle_hooks_uninstall(sup: &Arc<Supervisor>, mut req: Request, local: bool) {
+    if !local {
+        send_json(req, 403, &json!({"error": "only from this computer"}), &[]);
+        return;
+    }
+    let body = read_body(&mut req).unwrap_or_else(|| json!({}));
+    let dry = body.b("dry_run", false);
+    let cfg = sup.cfg.get();
+    let lines = crate::hooks::uninstall(&cfg, dry);
     send_json(
         req,
         200,

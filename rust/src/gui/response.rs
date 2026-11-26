@@ -230,9 +230,9 @@ fn blocks(ui: &mut Ui, events: &mut Events<'_>, end: Option<TagEnd>, compact: bo
                         }
                         let language = match &kind {
                             CodeBlockKind::Fenced(info) => {
-                                info.split_whitespace().next().unwrap_or("Código")
+                                info.split_whitespace().next().unwrap_or("Code")
                             }
-                            CodeBlockKind::Indented => "Código",
+                            CodeBlockKind::Indented => "Code",
                         };
                         code_block(ui, language, &code);
                     }
@@ -327,11 +327,11 @@ fn copy_done_button(ui: &mut Ui) -> egui::Response {
             st.corner_radius = CornerRadius::same(R);
         }
         ui.add(egui::Button::new(
-            RichText::new("✓ Copiado").font(medium(12.5)),
+            RichText::new("✓ Copied").font(medium(12.5)),
         ))
     })
     .inner
-    .on_hover_text("Copiado al portapapeles")
+    .on_hover_text("Copied to clipboard")
 }
 
 pub(super) fn code_block(ui: &mut Ui, label: &str, code: &str) {
@@ -362,7 +362,7 @@ pub(super) fn code_block(ui: &mut Ui, label: &str, code: &str) {
                     let btn = if just_copied {
                         copy_done_button(ui)
                     } else {
-                        quiet(ui, "Copiar").on_hover_text("Copiar al portapapeles")
+                        quiet(ui, "Copy").on_hover_text("Copy to clipboard")
                     };
                     if btn.clicked() {
                         ui.ctx().copy_text(display.to_owned());
@@ -488,12 +488,12 @@ mod tests {
             out
         };
 
-        // Frame 1: locate the first "Copiar" button.
+        // Frame 1: locate the first "Copy" button.
         let out1 = run_frame(1.0, vec![]);
-        let btn_rect = find_button_rect(&out1, "Copiar").expect("Copiar button rendered");
+        let btn_rect = find_button_rect(&out1, "Copy").expect("Copy button rendered");
         let btn_pos = btn_rect.center();
 
-        // Frame 2: hover over the first "Copiar" button -> pointing hand cursor + RAISED hover fill.
+        // Frame 2: hover over the first "Copy" button -> pointing hand cursor + RAISED hover fill.
         let out2 = run_frame(1.1, vec![egui::Event::PointerMoved(btn_pos)]);
         assert_eq!(out2.platform_output.cursor_icon, CursorIcon::PointingHand);
         let has_hover_fill = out2.shapes.iter().any(|cs| match &cs.shape {
@@ -502,7 +502,7 @@ mod tests {
         });
         assert!(
             has_hover_fill,
-            "hovering Copiar should paint RAISED hover fill"
+            "hovering Copy should paint RAISED hover fill"
         );
 
         // Frame 3: press primary button.
@@ -546,20 +546,20 @@ mod tests {
             vec!["powershell -ExecutionPolicy Bypass -File instalar_rust.ps1".to_string()]
         );
 
-        // Frame 5: first block shows "✓ Copiado", second block still shows "Copiar".
+        // Frame 5: first block shows "✓ Copied", second block still shows "Copy".
         let out5 = run_frame(1.5, vec![egui::Event::PointerMoved(btn_pos)]);
         assert!(
-            find_button_rect(&out5, "✓ Copiado").is_some(),
-            "first code block should show '✓ Copiado' feedback"
+            find_button_rect(&out5, "✓ Copied").is_some(),
+            "first code block should show '✓ Copied' feedback"
         );
         assert!(
-            find_button_rect(&out5, "Copiar").is_some(),
-            "second code block should remain 'Copiar'"
+            find_button_rect(&out5, "Copy").is_some(),
+            "second code block should remain 'Copy'"
         );
 
-        // Frame 6: after feedback duration elapses, label reverts to "Copiar".
+        // Frame 6: after feedback duration elapses, label reverts to "Copy".
         let out6 = run_frame(4.0, vec![]);
-        assert!(find_button_rect(&out6, "✓ Copiado").is_none());
-        assert!(find_button_rect(&out6, "Copiar").is_some());
+        assert!(find_button_rect(&out6, "✓ Copied").is_none());
+        assert!(find_button_rect(&out6, "Copy").is_some());
     }
 }

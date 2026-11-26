@@ -1,9 +1,12 @@
 [package]
 name = "metabrain"
-version = "1.4.0"
+version = "1.5.0"
 edition = "2021"
-description = "MetaBrain HMI: supervisory control for multi-brain AI orchestration"
+description = "MetaBrain — Mission Control for AI coding agents (Claude Code, Codex, Gemini, Ollama)"
 license = "MIT"
+readme = "../README.md"
+keywords = ["ai", "agents", "claude", "codex", "orchestration"]
+categories = ["command-line-utilities", "development-tools", "gui"]
 
 [lib]
 name = "metabrain"
@@ -45,7 +48,7 @@ tray-icon = "0.19"
 raw-window-handle = "0.6"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_Security", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse"] }
 
-[build-dependencies]
+[target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
 
 [profile.release]

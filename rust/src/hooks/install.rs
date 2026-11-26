@@ -157,3 +157,84 @@ pub fn install(cfg: &Value, exe: &str, dry_run: bool) -> Vec<String> {
     }
     out
 }
+
+/// Remove only MetaBrain hooks from every Claude Code `settings.json`, preserving all user hooks.
+pub fn uninstall(cfg: &Value, dry_run: bool) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for b in cfg.arr("brains") {
+        if b.s("kind") == "claude_code" {
+            let d = expand(
+                &b.os("config_dir")
+                    .unwrap_or_else(|| "~/.claude".to_string()),
+            );
+            if !dirs.contains(&d) {
+                dirs.push(d);
+            }
+        }
+    }
+    if dirs.is_empty() {
+        dirs.push(expand("~/.claude"));
+    }
+
+    for d in dirs {
+        let p = d.join("settings.json");
+        if !p.exists() {
+            out.push(format!("skip (missing): {}", p.display()));
+            continue;
+        }
+        let Some(mut s) = read_json(&p) else {
+            out.push(format!(
+                "skip (cannot parse, not touching it): {}",
+                p.display()
+            ));
+            continue;
+        };
+        let Some(obj) = s.as_object_mut() else {
+            out.push(format!(
+                "skip (cannot parse, not touching it): {}",
+                p.display()
+            ));
+            continue;
+        };
+        let mut removed = 0usize;
+        let mut drop_hooks_obj = false;
+        if let Some(hooks) = obj.get_mut("hooks").and_then(|v| v.as_object_mut()) {
+            let keys: Vec<String> = hooks.keys().cloned().collect();
+            for ev in keys {
+                if let Some(arr) = hooks.get(&ev).and_then(|v| v.as_array()).cloned() {
+                    let before = arr.len();
+                    let kept: Vec<Value> =
+                        arr.into_iter().filter(|x| !_is_ours_or_legacy(x)).collect();
+                    removed += before.saturating_sub(kept.len());
+                    if kept.is_empty() {
+                        hooks.remove(&ev);
+                    } else {
+                        hooks.insert(ev, Value::Array(kept));
+                    }
+                }
+            }
+            drop_hooks_obj = hooks.is_empty();
+        }
+        if drop_hooks_obj {
+            obj.remove("hooks");
+        }
+        if removed == 0 {
+            out.push(format!("clean (no MetaBrain hooks): {}", p.display()));
+            continue;
+        }
+        if !dry_run {
+            let _ = write_json(&p, &s);
+        }
+        out.push(format!(
+            "{} ({removed} entries): {}",
+            if dry_run {
+                "would remove hooks from"
+            } else {
+                "hooks removed from"
+            },
+            p.display()
+        ));
+    }
+    out
+}

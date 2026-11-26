@@ -31,29 +31,26 @@ pub(super) fn usage(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
     let tiles: [(String, &str, String, Color32); 4] = [
         (
             num(sum("today")),
-            "tokens hoy",
-            format!("{} en 5 h", num(sum("h5"))),
+            "tokens today",
+            format!("{} in 5h", num(sum("h5"))),
             INK,
         ),
         (
             num(sum("d7")),
-            "tokens en 7 días",
-            format!("{} cerebros", bs.len()),
+            "tokens in 7 days",
+            format!("{} brains", bs.len()),
             INK,
         ),
         (
-            format!("{usd:.2} USD"),
-            "gastado hoy en APIs",
-            "las cuentas de Claude no cobran por token".into(),
+            format!("${usd:.2}"),
+            "API spend today",
+            "subscription CLI plans excluded".into(),
             INK,
         ),
         (
             num(relay_saved),
-            "ahorro estimado por relevos",
-            format!(
-                "{} equivalentes a Opus por enrutamiento · 14 días",
-                num(routing_saved)
-            ),
+            "saved via handoffs",
+            format!("{} Opus-eq via routing · 14 days", num(routing_saved)),
             INK,
         ),
     ];
@@ -88,8 +85,8 @@ pub(super) fn usage(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
     // 2. Quota gauges per brain (small multiples of the same ring the map uses).
     section(
         ui,
-        "Cuánto le queda a cada cerebro",
-        Some("anillo = cuota usada; la hora es cuándo se restablece"),
+        "Live Quota Headroom",
+        Some("outer ring = 5h session · inner ring = weekly · timestamp = reset"),
     );
     let gw = 236.0;
     let per_row = ((ui.available_width() + gap) / (gw + gap)).floor().max(1.0) as usize;
@@ -108,8 +105,8 @@ pub(super) fn usage(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
     // 3. Daily tokens, stacked by brain.
     section(
         ui,
-        "Tokens por día",
-        Some("últimos 30 días · cada color es un cerebro"),
+        "Daily Token Volume",
+        Some("last 30 days · stacked by provider"),
     );
     card(ui, None, |ui| {
         ui.set_width(ui.available_width());
@@ -141,7 +138,7 @@ pub(super) fn usage(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
     columns2(
         ui,
         |ui| {
-            section(ui, "Hoy por hora", Some("últimas 24 h"));
+            section(ui, "Today by Hour", Some("last 24h"));
             card(ui, None, |ui| {
                 ui.set_width(ui.available_width());
                 let s: Vec<(String, Color32, Vec<f64>)> = bs
@@ -166,15 +163,11 @@ pub(super) fn usage(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
             });
         },
         |ui| {
-            section(
-                ui,
-                "Eficiencia",
-                Some("tokens por turno · más bajo es mejor"),
-            );
+            section(ui, "Efficiency", Some("tokens per turn · lower is better"));
             card(ui, None, |ui| {
                 ui.set_width(ui.available_width());
                 if sv.is_null() {
-                    ui.label(dim("Calculando…"));
+                    ui.label(dim("Calculating…"));
                     return;
                 }
                 let pts: Vec<(String, f64)> = sv
@@ -185,11 +178,11 @@ pub(super) fn usage(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                 line_chart(ui, &pts, 140.0, INFO);
                 ui.horizontal_wrapped(|ui| {
                     ui.label(faint(format!(
-                        "{} sesiones",
+                        "{} sessions",
                         sv.f("sessions").unwrap_or(0.0)
                     )));
                     ui.label(faint(format!(
-                        "· {} relevos de sesión",
+                        "· {} session handoffs",
                         sv.arr("relays").len()
                     )));
                     let routed_n = sv
@@ -197,7 +190,7 @@ pub(super) fn usage(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
                         .and_then(|r| r.f("routed_tasks"))
                         .unwrap_or(0.0);
                     if routed_n > 0.0 {
-                        ui.label(faint(format!("· {:.0} tareas enrutadas", routed_n)));
+                        ui.label(faint(format!("· {:.0} routed tasks", routed_n)));
                     }
                 });
             });
@@ -207,16 +200,16 @@ pub(super) fn usage(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
 
     // 5. What spent the most.
     ui.horizontal(|ui| {
-        section(ui, "Qué gastó más", None);
+        section(ui, "Top Consumers", None);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             for d in [30, 7, 1] {
                 if ui
                     .selectable_label(
                         app.ui.days == d,
                         match d {
-                            1 => "Hoy",
-                            7 => "7 días",
-                            _ => "30 días",
+                            1 => "Today",
+                            7 => "7 days",
+                            _ => "30 days",
                         },
                     )
                     .clicked()
@@ -231,11 +224,11 @@ pub(super) fn usage(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
         ui.set_width(ui.available_width());
         let top = u.arr("top_questions");
         if u.is_null() {
-            ui.label(dim("Leyendo las sesiones…"));
+            ui.label(dim("Reading sessions…"));
             return;
         }
         if top.is_empty() {
-            ui.label(dim("Sin preguntas registradas en ese periodo."));
+            ui.label(dim("No prompts recorded in this period."));
             return;
         }
         let max = top
@@ -278,7 +271,7 @@ pub(super) fn usage(app: &mut App, ui: &mut egui::Ui, snap: &Value) {
             ui.add_space(4.0);
         }
         ui.label(faint(format!(
-            "Total del periodo: {} tokens",
+            "Period total: {} tokens",
             num(u.f("total").unwrap_or(0.0))
         )));
     });
@@ -361,7 +354,7 @@ fn gauge_card(ui: &mut egui::Ui, b: &Value, color: Color32, w: f32) {
                     });
                     if let Some(v) = pct {
                         let rem = (100.0 - v).clamp(0.0, 100.0);
-                        ui.label(faint(format!("{label} · queda {rem:.0} %")));
+                        ui.label(faint(format!("{label} · {rem:.0}% left")));
                     } else {
                         // No plan limits published for this brain: show today's ledger total (falling back to live calls).
                         let today_ledger = b.get("usage").and_then(|u| u.f("today")).unwrap_or(0.0);
@@ -376,16 +369,16 @@ fn gauge_card(ui: &mut egui::Ui, b: &Value, color: Color32, w: f32) {
                                 .sum()
                         };
                         let live = if b.b("active", false) {
-                            "trabajando ahora"
+                            "working now"
                         } else {
-                            "en espera"
+                            "standby"
                         };
-                        ui.label(faint(format!("{} tokens hoy · {live}", num(today))));
+                        ui.label(faint(format!("{} tokens today · {live}", num(today))));
                     }
                     if let Some(bal) = b.get("balance").filter(|x| x.f("amount").is_some()) {
                         ui.label(
                             egui::RichText::new(format!(
-                                "saldo {:.2} {}",
+                                "balance {:.2} {}",
                                 bal.f("amount").unwrap_or(0.0),
                                 bal.s("currency")
                             ))
@@ -405,27 +398,27 @@ fn gauge_card(ui: &mut egui::Ui, b: &Value, color: Color32, w: f32) {
                     }
                     if let Some(rs) = reset {
                         ui.label(
-                            egui::RichText::new(format!("vuelve {}", hhmm(rs)))
+                            egui::RichText::new(format!("resets {}", hhmm(rs)))
                                 .font(body(11.5))
                                 .color(INK2),
                         );
                     }
-                    let secondary_group = if label == "semana" {
+                    let secondary_group = if label == "weekly" {
                         "session"
                     } else {
                         "weekly"
                     };
                     let secondary_label = if secondary_group == "session" {
-                        "sesión 5 h"
+                        "5h session"
                     } else {
-                        "semana"
+                        "weekly"
                     };
                     if let Some(sec) = quotas.iter().find(|q| q.s("group") == secondary_group) {
                         let v = sec.f("pct").unwrap_or(0.0);
                         let srem = (100.0 - v).clamp(0.0, 100.0);
                         ui.label(
                             egui::RichText::new(format!(
-                                "{secondary_label} {v:.0} % · queda {srem:.0} %"
+                                "{secondary_label} {v:.0}% · {srem:.0}% left"
                             ))
                             .font(body(11.5))
                             .color(if v >= 100.0 {
@@ -485,7 +478,7 @@ fn stacked(ui: &mut egui::Ui, data: &[(String, Color32, Vec<f64>)], height: f32)
         p.text(
             plot.center(),
             egui::Align2::CENTER_CENTER,
-            "Sin datos todavía",
+            "No data yet",
             body(12.0),
             INK3,
         );
@@ -556,11 +549,11 @@ fn stacked(ui: &mut egui::Ui, data: &[(String, Color32, Vec<f64>)], height: f32)
     let lab = |i: usize| -> String {
         let back = n - 1 - i;
         if back == 0 {
-            "ahora".into()
+            "now".into()
         } else if n == 24 {
-            format!("-{back} h")
+            format!("-{back}h")
         } else {
-            format!("-{back} d")
+            format!("-{back}d")
         }
     };
     for i in [0, n / 2, n - 1] {
@@ -619,7 +612,7 @@ fn line_chart(ui: &mut egui::Ui, pts: &[(String, f64)], height: f32, color: Colo
         p.text(
             plot.center(),
             egui::Align2::CENTER_CENTER,
-            "Hacen falta más días de datos",
+            "More days of data needed",
             body(12.0),
             INK3,
         );
@@ -671,6 +664,6 @@ fn line_chart(ui: &mut egui::Ui, pts: &[(String, f64)], height: f32, color: Colo
             Stroke::new(1.0, INK3),
         );
         p.circle(q, 4.5, PANEL, Stroke::new(2.0, color));
-        resp.on_hover_text(format!("{}: {} tokens por turno", pts[i].0, num(pts[i].1)));
+        resp.on_hover_text(format!("{}: {} tokens per turn", pts[i].0, num(pts[i].1)));
     }
 }
