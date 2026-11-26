@@ -306,7 +306,12 @@ pub(super) fn safe_upload_dir(cwd: &str) -> PathBuf {
             "/Library",
             "/Applications",
             "/private/etc",
-            "/private/var",
+            "/private/var/db",
+            "/private/var/log",
+            "/private/var/root",
+            "/private/var/run",
+            "/private/var/spool",
+            "/private/var/vm",
         ] {
             if unix_canon == blocked || unix_canon.starts_with(&format!("{blocked}/")) {
                 return fallback;
